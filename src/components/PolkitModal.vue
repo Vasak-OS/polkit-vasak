@@ -11,6 +11,7 @@ interface PolkitRequest {
 interface PolkitResult {
   success: boolean;
   cookie: string;
+  message?: string;
 }
 
 const visible = ref(false);
@@ -56,7 +57,7 @@ onMounted(async () => {
     if (event.payload.success) {
       visible.value = false;
     } else {
-      error.value = 'Contraseña incorrecta. Intente de nuevo.';
+      error.value = event.payload.message || 'Contraseña incorrecta. Intente de nuevo.';
       password.value = '';
       loading.value = false;
       nextTick(() => inputRef.value?.focus());

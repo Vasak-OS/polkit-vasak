@@ -1,14 +1,12 @@
 use std::collections::HashMap;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
-use tracing_subscriber;
 use zbus::interface;
 use zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
-
-// ── Shared state ──────────────────────────────────────────────────
 
 struct AppState {
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
@@ -16,120 +14,88 @@ struct AppState {
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-// ── D-Bus Polkit Agent ────────────────────────────────────────────
-
 struct PolkitAgent {
     app_handle: AppHandle,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
     session_map: Arc<Mutex<HashMap<String, String>>>,
-    conn: zbus::Connection,
 }
 
 #[interface(name = "org.freedesktop.PolicyKit1.AuthenticationAgent")]
 impl PolkitAgent {
     async fn begin_authentication(
         &mut self,
-        _action_id: &str,
+        action_id: &str,
         message: &str,
         _icon_name: &str,
-        _details: HashMap<String, String>,
+        details: HashMap<String, String>,
         cookie: &str,
-        _identities: Vec<(String, HashMap<String, OwnedValue>)>,
+        identities: Vec<(String, HashMap<String, OwnedValue>)>,
     ) -> OwnedObjectPath {
-        eprintln!("[vasak-polkit] >>> begin_authentication CALLED");
-        eprintln!("[vasak-polkit] >>> action_id={_action_id} cookie={cookie}");
-        eprintln!("[vasak-polkit] >>> _identities count: {}", _identities.len());
-        for (i, (kind, _det)) in _identities.iter().enumerate() {
-            eprintln!("[vasak-polkit] >>> identity[{i}]: kind={kind}");
-        }
+        eprintln!("[vasak-polkit] begin_authentication action_id={action_id} cookie={cookie}");
 
         let cookie_owned = cookie.to_string();
         let message_owned = message.to_string();
-        let action_id = _action_id.to_string();
+        let action_id_owned = action_id.to_string();
+        let subject_pid: u32 = details
+            .get("polkit.subject-pid")
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(0);
+        let identity = identities.into_iter().next();
+        let (identity_kind, identity_details) = identity
+            .unwrap_or_else(|| ("unix-user".to_string(), HashMap::new()));
+        let identity_uid: u32 = identity_details
+            .get("uid")
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(1000);
+
         let session_num = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_path_str =
             format!("/org/freedesktop/PolicyKit1/AuthenticationAgent/Session/{session_num}");
-
         let session_path: OwnedObjectPath = session_path_str
             .try_into()
             .expect("Static session path should always be valid");
 
-        let (tx, rx) = oneshot::channel();
+        let (password_tx, password_rx) = oneshot::channel::<String>();
+        let (done_tx, done_rx) = oneshot::channel::<bool>();
+
         self.pending
             .lock()
             .expect("lock pending")
-            .insert(cookie_owned.clone(), tx);
+            .insert(cookie_owned.clone(), password_tx);
 
         self.session_map
             .lock()
             .expect("lock session_map")
             .insert(session_path.to_string(), cookie_owned.clone());
 
-        let app_handle = self.app_handle.clone();
-        let conn = self.conn.clone();
         let cookie_task = cookie_owned.clone();
+        let subject_pid_task = subject_pid;
+        let identity_kind_task = identity_kind.clone();
 
         tokio::spawn(async move {
-            match rx.await {
-                Ok(password) => {
-                    let ok = authenticate_pam(&password).await;
-                    eprintln!(
-                        "[vasak-polkit] PAM result for cookie={cookie_task}: {ok}"
-                    );
-
-                    if ok {
-                        let uid = unsafe { libc::getuid() };
-                        let identity: (&str, HashMap<String, Value<'_>>) = (
-                            "unix-user",
-                            HashMap::from([(
-                                "uid".to_string(),
-                                Value::U32(uid),
-                            )]),
-                        );
-                        let sid = std::env::var("XDG_SESSION_ID")
-                            .unwrap_or_else(|_| "1".to_string());
-                        let subject: (&str, HashMap<String, Value<'_>>) = (
-                            "unix-session",
-                            HashMap::from([(
-                                "session-id".to_string(),
-                                Value::Str(sid.into()),
-                            )]),
-                        );
-
-                        let resp = conn
-                            .call_method(
-                                Some("org.freedesktop.PolicyKit1"),
-                                "/org/freedesktop/PolicyKit1/Authority",
-                                Some("org.freedesktop.PolicyKit1.Authority"),
-                                "AuthenticationAgentResponse3",
-                                &(&cookie_task, &identity, &subject),
-                            )
-                            .await;
-
-                        if let Err(e) = resp {
-                            eprintln!(
-                                "[vasak-polkit] AuthenticationAgentResponse3 failed: {e}"
-                            );
-                        } else {
-                            eprintln!(
-                                "[vasak-polkit] AuthenticationAgentResponse3 OK"
-                            );
-                        }
-                    }
-
-                    let _ = app_handle.emit(
-                        "polkit-result",
-                        serde_json::json!({
-                            "success": ok,
-                            "cookie": cookie_task,
-                            "action_id": action_id,
-                        }),
-                    );
-                }
+            let password = match password_rx.await {
+                Ok(pwd) => pwd,
                 Err(_) => {
-                    eprintln!("[vasak-polkit] Auth cancelled (oneshot dropped)");
+                    let _ = done_tx.send(false);
+                    return;
                 }
+            };
+
+            if !authenticate_pam(&password).await {
+                let _ = done_tx.send(false);
+                return;
             }
+
+            let ok = call_authentication_response_via_sudo(
+                password,
+                cookie_task,
+                identity_kind_task,
+                identity_uid,
+                subject_pid_task,
+            )
+            .await;
+
+            let _ = done_tx.send(ok);
         });
 
         let _ = self.app_handle.emit(
@@ -139,19 +105,49 @@ impl PolkitAgent {
                 "cookie": cookie_owned,
             }),
         );
-
         if let Some(window) = self.app_handle.get_webview_window("main") {
             let _ = window.show();
             let _ = window.set_focus();
         }
 
-        eprintln!("[vasak-polkit] Return session path: {session_path}");
+        // Block until auth flow completes — polkitd removes the session
+        // from active_sessions immediately after begin_authentication returns.
+        let success = done_rx.await.unwrap_or(false);
+
+        let _ = self.app_handle.emit(
+            "polkit-result",
+            serde_json::json!({
+                "success": success,
+                "cookie": cookie_owned,
+                "action_id": action_id_owned,
+                "message": if success { "" } else { "Autenticación fallida" },
+            }),
+        );
+
+        eprintln!("[vasak-polkit] auth result success={success}");
         session_path
     }
 
-    async fn cancel_authentication(&mut self, session: ObjectPath<'_>) {
-        eprintln!("[vasak-polkit] CancelAuthentication: {session}");
+    async fn send_password(
+        &mut self,
+        cookie: &str,
+        password: &str,
+    ) -> bool {
+        let tx = self
+            .pending
+            .lock()
+            .expect("lock pending")
+            .remove(cookie);
+        match tx {
+            Some(tx) => tx.send(password.to_string()).is_ok(),
+            None => {
+                eprintln!("[vasak-polkit] No pending auth for cookie={cookie}");
+                false
+            }
+        }
+    }
 
+    async fn cancel_authentication(&mut self, session: ObjectPath<'_>) {
         let cookie = self
             .session_map
             .lock()
@@ -167,8 +163,6 @@ impl PolkitAgent {
         );
     }
 }
-
-// ── Tauri Command ──────────────────────────────────────────────────
 
 #[tauri::command]
 async fn submit_password(
@@ -187,7 +181,77 @@ async fn submit_password(
     Ok(true)
 }
 
-// ── PAM authentication (runs on blocking thread) ───────────────────
+async fn call_authentication_response_via_sudo(
+    password: String,
+    cookie: String,
+    identity_kind: String,
+    uid: u32,
+    subject_pid: u32,
+) -> bool {
+    let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        let helper_path = {
+            let mut p = std::env::current_exe()
+                .map_err(|e| format!("current_exe: {e}"))?;
+            p.set_file_name("polkit-agent-helper-dbus");
+            if !p.exists() {
+                let mut dev = std::env::current_exe()
+                    .map_err(|e| format!("current_exe: {e}"))?;
+                dev.pop();
+                dev.push("polkit-agent-helper-dbus");
+                dev
+            } else {
+                p
+            }
+        };
+
+        let mut child = Command::new("sudo")
+            .arg("-S")
+            .arg(&helper_path)
+            .arg("--cookie")
+            .arg(&cookie)
+            .arg("--identity-kind")
+            .arg(&identity_kind)
+            .arg("--identity-uid")
+            .arg(uid.to_string())
+            .arg("--subject-pid")
+            .arg(subject_pid.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn sudo: {e}"))?;
+
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            stdin
+                .write_all(format!("{password}\n").as_bytes())
+                .map_err(|e| format!("write password: {e}"))?;
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("wait sudo: {e}"))?;
+
+        if output.status.success() {
+            Ok(true)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Err(format!("sudo failed: {stderr}"))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(ok)) => ok,
+        Ok(Err(e)) => {
+            eprintln!("[vasak-polkit] sudo error: {e}");
+            false
+        }
+        Err(e) => {
+            eprintln!("[vasak-polkit] sudo panic: {e}");
+            false
+        }
+    }
+}
 
 async fn authenticate_pam(password: &str) -> bool {
     let pwd = password.to_string();
@@ -195,25 +259,16 @@ async fn authenticate_pam(password: &str) -> bool {
     tokio::task::spawn_blocking(move || {
         let mut client = match pam::Client::with_password("polkit-1") {
             Ok(c) => c,
-            Err(e) => {
-                eprintln!("[vasak-polkit] PAM Client::with_password failed: {e}");
-                return false;
-            }
+            Err(_) => return false,
         };
         client
             .conversation_mut()
             .set_credentials(&login, &pwd);
-        let result = client.authenticate();
-        if result.is_err() {
-            eprintln!("[vasak-polkit] PAM authenticate failed: {:?}", result);
-        }
-        result.is_ok()
+        client.authenticate().is_ok()
     })
     .await
     .unwrap_or(false)
 }
-
-// ── D-Bus agent registration ──────────────────────────────────────
 
 async fn register_polkit_agent(
     app_handle: AppHandle,
@@ -226,9 +281,8 @@ async fn register_polkit_agent(
 
     let agent = PolkitAgent {
         app_handle: app_handle.clone(),
-        pending,
+        pending: pending.clone(),
         session_map,
-        conn: conn.clone(),
     };
 
     conn.object_server()
@@ -239,24 +293,9 @@ async fn register_polkit_agent(
         .await
         .expect("Failed to register agent object on D-Bus");
 
-    // Register a debug interface on a public path to test D-Bus dispatch
-    struct DebugAgent;
-    #[interface(name = "org.vasak.DebugAgent")]
-    impl DebugAgent {
-        async fn ping(&mut self) -> String {
-            eprintln!("[vasak-polkit] Debug PING received");
-            "pong".to_string()
-        }
-    }
-    conn.object_server()
-        .at("/org/vasak/DebugAgent", DebugAgent)
-        .await
-        .expect("Failed to register debug agent");
-
     eprintln!("[vasak-polkit] Bus unique name: {}", conn.unique_name().map(|n| n.as_str()).unwrap_or("?"));
 
     let sid = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "1".to_string());
-    eprintln!("[vasak-polkit] Registering agent for session {sid}");
 
     let subject: (&str, HashMap<String, Value<'_>>) = (
         "unix-session",
@@ -282,7 +321,7 @@ async fn register_polkit_agent(
 
     match result {
         Ok(_) => eprintln!("[vasak-polkit] Registered successfully"),
-        Err(e) => eprintln!("[vasak-polkit] Register failed (may already exist): {e}"),
+        Err(e) => eprintln!("[vasak-polkit] Register failed: {e}"),
     }
 
     loop {
@@ -290,18 +329,8 @@ async fn register_polkit_agent(
     }
 }
 
-// ── Application entry point ────────────────────────────────────────
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Capture zbus tracing logs to diagnose D-Bus dispatch issues
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_new("zbus=trace,zvariant=trace")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("zbus=debug")),
-        )
-        .try_init();
-
     let pending = Arc::new(Mutex::new(HashMap::new()));
     let session_map = Arc::new(Mutex::new(HashMap::new()));
 
