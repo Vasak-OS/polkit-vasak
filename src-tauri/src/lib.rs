@@ -125,6 +125,11 @@ impl PolkitAgent {
         );
 
         eprintln!("[vasak-polkit] auth result success={success}");
+
+        if let Some(window) = self.app_handle.get_webview_window("main") {
+            let _ = window.hide();
+        }
+
         session_path
     }
 
