@@ -98,6 +98,11 @@ impl PolkitAgent {
             let _ = done_tx.send(ok);
         });
 
+        // Show window first so the Vue transition is visible
+        if let Some(window) = self.app_handle.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
         let _ = self.app_handle.emit(
             "polkit-request",
             serde_json::json!({
@@ -105,10 +110,6 @@ impl PolkitAgent {
                 "cookie": cookie_owned,
             }),
         );
-        if let Some(window) = self.app_handle.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
 
         // Block until auth flow completes — polkitd removes the session
         // from active_sessions immediately after begin_authentication returns.
@@ -126,8 +127,12 @@ impl PolkitAgent {
 
         eprintln!("[vasak-polkit] auth result success={success}");
 
-        if let Some(window) = self.app_handle.get_webview_window("main") {
-            let _ = window.hide();
+        if success {
+            // Let the Vue leave transition play before hiding the window
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            if let Some(window) = self.app_handle.get_webview_window("main") {
+                let _ = window.hide();
+            }
         }
 
         session_path
@@ -184,6 +189,18 @@ async fn submit_password(
 
     tx.send(password).map_err(|_| "Receiver dropped".to_string())?;
     Ok(true)
+}
+
+#[tauri::command]
+async fn cancel_pending(
+    state: State<'_, AppState>,
+    cookie: String,
+) -> Result<(), String> {
+    state.pending
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&cookie);
+    Ok(())
 }
 
 async fn call_authentication_response_via_sudo(
@@ -361,7 +378,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![submit_password])
+        .invoke_handler(tauri::generate_handler![submit_password, cancel_pending])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
