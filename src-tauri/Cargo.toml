@@ -1,5 +1,5 @@
 [package]
-name = "vapp"
+name = "vasak-polkit-agent"
 version = "0.1.0"
 description = "A Vasak Application (template)"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "vapp_lib"
+name = "vasak_polkit_agent_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -26,6 +26,15 @@ tauri-plugin-vicons = "2"
 tauri-plugin-config-manager = "2"
 gtk = "0.18"
 base64 = "0.22"
+
+# Polkit agent D-Bus + async runtime
+zbus = { version = "4", features = ["tokio"] }
+tokio = { version = "1", features = ["full"] }
+pam = "0.8"
+zvariant = "4"
+futures-util = "0.3"
+libc = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

@@ -7,7 +7,7 @@ import TopBarComponent from '@/components/topbar/TopBarComponent.vue';
     <TopBarComponent>
     </TopBarComponent>
     <div class="flex-1 flex p-1">
-      <p>VAPP</p>
+      <p>Vasak Polkit Agent</p>
     </div>
   </div>
 </template>
