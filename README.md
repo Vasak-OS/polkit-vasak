@@ -1,16 +1,110 @@
-# Tauri + Vue + TypeScript
+# vasak-polkit-agent
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Agente de autenticación de PolicyKit para VasakOS.
 
-## Recommended IDE Setup
+## ¿Qué es?
 
-- [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+`vasak-polkit-agent` es un agente de PolicyKit que se registra en el bus
+D-Bus del sistema para manejar solicitudes de autenticación de aplicaciones
+como `pkexec`. Muestra una ventana minimalista para que el usuario ingrese
+su contraseña y completa el flujo de autenticación.
 
-## Type Support For `.vue` Imports in TS
+## Arquitectura
 
-Since TypeScript cannot handle type information for `.vue` imports, they are shimmed to be a generic Vue component type by default. In most cases this is fine if you don't really care about component prop types outside of templates. However, if you wish to get actual prop types in `.vue` imports (for example to get props validation when using manual `h(...)` calls), you can enable Volar's Take Over mode by following these steps:
+```mermaid
+sequenceDiagram
+    participant pkexec
+    participant polkitd
+    participant D-Bus
+    participant Agent as agente (zbus)
+    participant Tauri
+    participant Vue as diálogo Vue
+    participant PAM
+    participant Sudo
+    participant Helper as polkit-agent-helper-dbus
 
-1. Run `Extensions: Show Built-in Extensions` from VS Code's command palette, look for `TypeScript and JavaScript Language Features`, then right click and select `Disable (Workspace)`. By default, Take Over mode will enable itself if the default TypeScript extension is disabled.
-2. Reload the VS Code window by running `Developer: Reload Window` from the command palette.
+    pkexec->>polkitd: solicita autenticación
+    polkitd->>D-Bus: BeginAuthentication
+    D-Bus->>Agent: BeginAuthentication(action, cookie, identities)
+    Agent->>Tauri: emit polkit-request
+    Tauri->>Vue: muestra diálogo
+    Vue-->>Tauri: contraseña
+    Tauri->>Agent: submit_password
+    Agent->>PAM: authenticate(polkit-1)
+    PAM-->>Agent: ok/error
+    alt PAM ok
+        Agent->>Sudo: sudo -S polkit-agent-helper-dbus
+        Sudo->>Helper: ejecuta como root
+        Helper->>polkitd: AuthenticationAgentResponse3(cookie, identity, subject)
+        polkitd-->>Helper: MethodReturn
+        Helper-->>Sudo: exit 0
+        Sudo-->>Agent: SUCCESS
+        Agent-->>polkitd: MethodReturn (session path)
+        polkitd-->>pkexec: autorizado
+    else PAM error
+        Agent-->>Vue: polkit-result (error)
+        Agent-->>polkitd: MethodReturn (fallo)
+        polkitd-->>pkexec: denegado
+    end
+```
 
-You can learn more about Take Over mode [here](https://github.com/johnsoncodehk/volar/discussions/471).
+### Componentes
+
+- **`vasak-polkit-agent`** — Binario principal (Tauri + zbus).
+  - Se registra como agente PolicyKit en `unix-session:2`.
+  - Recibe `BeginAuthentication` vía D-Bus, muestra un diálogo de contraseña.
+  - Valida con PAM (servicio `polkit-1`) y llama a `AuthenticationAgentResponse3`
+    mediante un helper ejecutado como root vía sudo.
+  - Bloquea `BeginAuthentication` hasta que el helper completa la llamada
+    D-Bus (requisito de polkitd ≥ 127).
+
+- **`polkit-agent-helper-dbus`** — Helper setuid (ejecutado via sudo).
+  - Abre un pidfd del proceso solicitante (`pidfd_open`).
+  - Lee `start-time` de `/proc/PID/stat`.
+  - Llama a `AuthenticationAgentResponse3` en el bus del sistema con
+    el subject `unix-process` (pid + pidfd + start-time).
+
+## Requisitos
+
+- Rust 1.85+
+- Node.js 20+ / Bun
+- Tauri CLI 2.x
+- D-Bus
+- Polkit ≥ 127
+- sudo
+
+## Compilar
+
+```bash
+bun install
+cargo tauri build
+```
+
+Los binarios se generan en `src-tauri/target/release/`:
+- `vasak-polkit-agent`
+- `polkit-agent-helper-dbus`
+
+## Instalación
+
+```bash
+sudo install -m 755 src-tauri/target/release/vasak-polkit-agent /usr/bin/
+sudo install -m 755 src-tauri/target/release/polkit-agent-helper-dbus /usr/bin/
+```
+
+Configuración D-Bus necesaria en
+`/usr/share/dbus-1/system.d/org.freedesktop.PolicyKit1.conf`:
+
+```xml
+<policy user="polkitd">
+  <allow send_interface="org.freedesktop.PolicyKit1.AuthenticationAgent"/>
+</policy>
+```
+
+## Desarrollo
+
+```bash
+bun run tauri dev
+```
+
+Esto inicia el agente y el frontend con hot-reload. Ejecutar `pkexec id`
+en otra terminal para probar.
