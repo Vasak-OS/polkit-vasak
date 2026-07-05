@@ -317,32 +317,51 @@ async fn register_polkit_agent(
 
     eprintln!("[vasak-polkit] Bus unique name: {}", conn.unique_name().map(|n| n.as_str()).unwrap_or("?"));
 
-    let sid = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "3".to_string());
-    let subject: (&str, HashMap<String, Value<'_>>) = (
-        "unix-session",
-        HashMap::from([(
-            "session-id".to_string(),
-            Value::Str(sid.into()),
-        )]),
-    );
+    let known_sessions = [
+        std::env::var("XDG_SESSION_ID").ok(),
+        Some("2".to_string()),
+        Some("3".to_string()),
+        Some("1".to_string()),
+    ];
 
-    let result = conn
-        .call_method(
-            Some("org.freedesktop.PolicyKit1"),
-            "/org/freedesktop/PolicyKit1/Authority",
-            Some("org.freedesktop.PolicyKit1.Authority"),
-            "RegisterAuthenticationAgent",
-            &(
-                &subject,
-                "en_US.UTF-8",
-                "/org/freedesktop/PolicyKit1/AuthenticationAgent",
-            ),
-        )
-        .await;
+    let mut registered = false;
+    for sid in known_sessions.into_iter().flatten() {
+        let subject: (&str, HashMap<String, Value<'_>>) = (
+            "unix-session",
+            HashMap::from([(
+                "session-id".to_string(),
+                Value::Str(sid.clone().into()),
+            )]),
+        );
 
-    match result {
-        Ok(_) => eprintln!("[vasak-polkit] Registered successfully"),
-        Err(e) => eprintln!("[vasak-polkit] Register failed: {e}"),
+        let result = conn
+            .call_method(
+                Some("org.freedesktop.PolicyKit1"),
+                "/org/freedesktop/PolicyKit1/Authority",
+                Some("org.freedesktop.PolicyKit1.Authority"),
+                "RegisterAuthenticationAgent",
+                &(
+                    &subject,
+                    "en_US.UTF-8",
+                    "/org/freedesktop/PolicyKit1/AuthenticationAgent",
+                ),
+            )
+            .await;
+
+        match result {
+            Ok(_) => {
+                eprintln!("[vasak-polkit] Registered successfully with session {sid}");
+                registered = true;
+                break;
+            }
+            Err(e) => {
+                eprintln!("[vasak-polkit] Session {sid} failed: {e}");
+            }
+        }
+    }
+
+    if !registered {
+        eprintln!("[vasak-polkit] Failed to register with any session");
     }
 
     loop {
