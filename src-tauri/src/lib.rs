@@ -317,12 +317,12 @@ async fn register_polkit_agent(
 
     eprintln!("[vasak-polkit] Bus unique name: {}", conn.unique_name().map(|n| n.as_str()).unwrap_or("?"));
 
-    let uid = unsafe { libc::getuid() };
+    let sid = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "3".to_string());
     let subject: (&str, HashMap<String, Value<'_>>) = (
-        "unix-user",
+        "unix-session",
         HashMap::from([(
-            "uid".to_string(),
-            Value::U32(uid),
+            "session-id".to_string(),
+            Value::Str(sid.into()),
         )]),
     );
 
