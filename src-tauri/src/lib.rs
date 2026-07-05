@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
-use zbus::{interface, Connection};
+use zbus::interface;
 use zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
 struct AppState {
@@ -292,42 +292,6 @@ async fn authenticate_pam(password: &str) -> bool {
     .unwrap_or(false)
 }
 
-async fn get_session_id(conn: &Connection) -> String {
-    let pid = std::process::id() as u32;
-
-    let result: Result<String, _> = conn
-        .call_method(
-            Some("org.freedesktop.login1"),
-            "/org/freedesktop/login1",
-            Some("org.freedesktop.login1.Manager"),
-            "GetSessionByPID",
-            &(pid,),
-        )
-        .await
-        .and_then(|msg| msg.body().deserialize());
-
-    match result {
-        Ok(session_path) => {
-            let path = ObjectPath::try_from(session_path.as_str())
-                .expect("Invalid session object path");
-            let id: Result<String, _> = conn
-                .call_method(
-                    Some("org.freedesktop.login1"),
-                    &path,
-                    Some("org.freedesktop.DBus.Properties"),
-                    "Get",
-                    &("org.freedesktop.login1.Session", "Id"),
-                )
-                .await
-                .and_then(|msg| msg.body().deserialize());
-            id.unwrap_or_else(|_| "1".to_string())
-        }
-        Err(_) => {
-            std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "1".to_string())
-        }
-    }
-}
-
 async fn register_polkit_agent(
     app_handle: AppHandle,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
@@ -353,13 +317,12 @@ async fn register_polkit_agent(
 
     eprintln!("[vasak-polkit] Bus unique name: {}", conn.unique_name().map(|n| n.as_str()).unwrap_or("?"));
 
-    let sid = get_session_id(&conn).await;
-
+    let uid = unsafe { libc::getuid() };
     let subject: (&str, HashMap<String, Value<'_>>) = (
-        "unix-session",
+        "unix-user",
         HashMap::from([(
-            "session-id".to_string(),
-            Value::Str(sid.into()),
+            "uid".to_string(),
+            Value::U32(uid),
         )]),
     );
 
