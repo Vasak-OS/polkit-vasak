@@ -19,9 +19,8 @@ sequenceDiagram
     participant Agent as agente (zbus)
     participant Tauri
     participant Vue as diálogo Vue
+    participant Helper as polkit-agent-helper-dbus (setuid root)
     participant PAM
-    participant Sudo
-    participant Helper as polkit-agent-helper-dbus
 
     pkexec->>polkitd: solicita autenticación
     polkitd->>D-Bus: BeginAuthentication
@@ -30,18 +29,16 @@ sequenceDiagram
     Tauri->>Vue: muestra diálogo
     Vue-->>Tauri: contraseña
     Tauri->>Agent: submit_password
-    Agent->>PAM: authenticate(polkit-1)
-    PAM-->>Agent: ok/error
+    Agent->>Helper: spawn (uid/pid en argv; cookie+password por stdin)
+    Helper->>PAM: authenticate(polkit-1) como el usuario de la identidad
+    PAM-->>Helper: ok/error
     alt PAM ok
-        Agent->>Sudo: sudo -S polkit-agent-helper-dbus
-        Sudo->>Helper: ejecuta como root
         Helper->>polkitd: AuthenticationAgentResponse3(cookie, identity, subject)
         polkitd-->>Helper: MethodReturn
-        Helper-->>Sudo: exit 0
-        Sudo-->>Agent: SUCCESS
+        Helper-->>Agent: exit 0 (SUCCESS)
         Agent-->>polkitd: MethodReturn (session path)
         polkitd-->>pkexec: autorizado
-    else PAM error
+    else PAM error / helper exit != 0
         Agent-->>Vue: polkit-result (error)
         Agent-->>polkitd: MethodReturn (fallo)
         polkitd-->>pkexec: denegado
@@ -50,19 +47,22 @@ sequenceDiagram
 
 ### Componentes
 
-- **`vasak-polkit-agent`** — Binario principal (Tauri + zbus).
-  - Se registra como agente PolicyKit en `unix-session:2`.
+- **`vasak-polkit-agent`** — Binario principal (Tauri + zbus), corre **sin privilegios**.
+  - Se registra como agente PolicyKit en la sesión del usuario.
   - Recibe `BeginAuthentication` vía D-Bus, muestra un diálogo de contraseña.
-  - Valida con PAM (servicio `polkit-1`) y llama a `AuthenticationAgentResponse3`
-    mediante un helper ejecutado como root vía sudo.
+  - **No autentica él mismo**: entrega cookie y contraseña (por stdin) al helper
+    setuid, que es el componente de confianza.
   - Bloquea `BeginAuthentication` hasta que el helper completa la llamada
     D-Bus (requisito de polkitd ≥ 127).
 
-- **`polkit-agent-helper-dbus`** — Helper setuid (ejecutado via sudo).
-  - Abre un pidfd del proceso solicitante (`pidfd_open`).
-  - Lee `start-time` de `/proc/PID/stat`.
-  - Llama a `AuthenticationAgentResponse3` en el bus del sistema con
-    el subject `unix-process` (pid + pidfd + start-time).
+- **`polkit-agent-helper-dbus`** — Helper **setuid root** (componente de confianza).
+  - polkitd solo acepta `AuthenticationAgentResponse3` desde uid 0, por eso es
+    setuid (igual que el `polkit-agent-helper-1` estándar).
+  - Lee cookie y contraseña **por stdin** (nunca argv, para no filtrarlas por `ps`).
+  - **Autentica vía PAM (`polkit-1`) la identidad exacta que polkit pidió**
+    (resuelta desde el uid), y solo entonces responde.
+  - Abre un pidfd del proceso solicitante (`pidfd_open`) y lee `start-time` de
+    `/proc/PID/stat`; envía el subject `unix-process` (pid + pidfd + start-time).
 
 ## Requisitos
 
@@ -71,7 +71,6 @@ sequenceDiagram
 - Tauri CLI 2.x
 - D-Bus
 - Polkit ≥ 127
-- sudo
 
 ## Compilar
 

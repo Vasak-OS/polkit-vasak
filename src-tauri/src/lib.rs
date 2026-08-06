@@ -41,12 +41,17 @@ impl PolkitAgent {
             .and_then(|p| p.parse().ok())
             .unwrap_or(0);
         let identity = identities.into_iter().next();
-        let (identity_kind, identity_details) = identity
-            .unwrap_or_else(|| ("unix-user".to_string(), HashMap::new()));
-        let identity_uid: u32 = identity_details
-            .get("uid")
-            .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(1000);
+        let identity_kind = identity
+            .as_ref()
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| "unix-user".to_string());
+        // Authenticate the *exact* identity polkit asked for. Never default to
+        // an arbitrary uid (a previous `unwrap_or(1000)` let auth_admin actions
+        // be validated against the wrong account).
+        let identity_uid: Option<u32> = identity
+            .as_ref()
+            .and_then(|(_, d)| d.get("uid"))
+            .and_then(|v| u32::try_from(v).ok());
 
         let session_num = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
         let session_path_str =
@@ -81,16 +86,24 @@ impl PolkitAgent {
                 }
             };
 
-            if !authenticate_pam(&password).await {
-                let _ = done_tx.send(false);
-                return;
-            }
+            // Without a concrete identity from polkit we cannot authenticate;
+            // fail closed rather than guessing an account.
+            let uid = match identity_uid {
+                Some(uid) => uid,
+                None => {
+                    eprintln!("[vasak-polkit] no identity uid supplied by polkit");
+                    let _ = done_tx.send(false);
+                    return;
+                }
+            };
 
-            let ok = call_authentication_response_via_sudo(
+            // The setuid helper performs the PAM check (as root, for `uid`) and
+            // only then answers polkitd. The agent never authenticates itself.
+            let ok = call_authentication_helper(
                 password,
                 cookie_task,
                 identity_kind_task,
-                identity_uid,
+                uid,
                 subject_pid_task,
             )
             .await;
@@ -136,25 +149,6 @@ impl PolkitAgent {
         }
 
         session_path
-    }
-
-    async fn send_password(
-        &mut self,
-        cookie: &str,
-        password: &str,
-    ) -> bool {
-        let tx = self
-            .pending
-            .lock()
-            .expect("lock pending")
-            .remove(cookie);
-        match tx {
-            Some(tx) => tx.send(password.to_string()).is_ok(),
-            None => {
-                eprintln!("[vasak-polkit] No pending auth for cookie={cookie}");
-                false
-            }
-        }
     }
 
     async fn cancel_authentication(&mut self, session: ObjectPath<'_>) {
@@ -203,7 +197,28 @@ async fn cancel_pending(
     Ok(())
 }
 
-async fn call_authentication_response_via_sudo(
+/// Locate the setuid `polkit-agent-helper-dbus` binary.
+///
+/// Prefer a copy next to the running agent (dev builds), then the installed
+/// path.
+fn resolve_helper_path() -> Result<std::path::PathBuf, String> {
+    let mut sibling =
+        std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    sibling.set_file_name("polkit-agent-helper-dbus");
+    if sibling.exists() {
+        return Ok(sibling);
+    }
+    let installed = std::path::PathBuf::from("/usr/bin/polkit-agent-helper-dbus");
+    if installed.exists() {
+        return Ok(installed);
+    }
+    Err("polkit-agent-helper-dbus not found".to_string())
+}
+
+/// Hand the request to the setuid helper, which authenticates `uid` via PAM and
+/// answers polkitd. The cookie and password are written to the helper's stdin
+/// (never argv) so they never appear in `ps`/`/proc/<pid>/cmdline`.
+async fn call_authentication_helper(
     password: String,
     cookie: String,
     identity_kind: String,
@@ -211,26 +226,9 @@ async fn call_authentication_response_via_sudo(
     subject_pid: u32,
 ) -> bool {
     let result = tokio::task::spawn_blocking(move || -> Result<bool, String> {
-        let helper_path = {
-            let mut p = std::env::current_exe()
-                .map_err(|e| format!("current_exe: {e}"))?;
-            p.set_file_name("polkit-agent-helper-dbus");
-            if !p.exists() {
-                let mut dev = std::env::current_exe()
-                    .map_err(|e| format!("current_exe: {e}"))?;
-                dev.pop();
-                dev.push("polkit-agent-helper-dbus");
-                dev
-            } else {
-                p
-            }
-        };
+        let helper_path = resolve_helper_path()?;
 
-        let mut child = Command::new("sudo")
-            .arg("-S")
-            .arg(&helper_path)
-            .arg("--cookie")
-            .arg(&cookie)
+        let mut child = Command::new(&helper_path)
             .arg("--identity-kind")
             .arg(&identity_kind)
             .arg("--identity-uid")
@@ -241,23 +239,29 @@ async fn call_authentication_response_via_sudo(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("spawn sudo: {e}"))?;
+            .map_err(|e| format!("spawn helper: {e}"))?;
 
-        if let Some(ref mut stdin) = child.stdin {
+        {
             use std::io::Write;
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| "helper stdin unavailable".to_string())?;
+            // Line 1: cookie, line 2: password. Neither contains a newline.
             stdin
-                .write_all(format!("{password}\n").as_bytes())
-                .map_err(|e| format!("write password: {e}"))?;
+                .write_all(format!("{cookie}\n{password}\n").as_bytes())
+                .map_err(|e| format!("write helper stdin: {e}"))?;
         }
+
         let output = child
             .wait_with_output()
-            .map_err(|e| format!("wait sudo: {e}"))?;
+            .map_err(|e| format!("wait helper: {e}"))?;
 
         if output.status.success() {
             Ok(true)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Err(format!("sudo failed: {stderr}"))
+            Err(format!("helper failed: {stderr}"))
         }
     })
     .await;
@@ -265,31 +269,14 @@ async fn call_authentication_response_via_sudo(
     match result {
         Ok(Ok(ok)) => ok,
         Ok(Err(e)) => {
-            eprintln!("[vasak-polkit] sudo error: {e}");
+            eprintln!("[vasak-polkit] helper error: {e}");
             false
         }
         Err(e) => {
-            eprintln!("[vasak-polkit] sudo panic: {e}");
+            eprintln!("[vasak-polkit] helper join error: {e}");
             false
         }
     }
-}
-
-async fn authenticate_pam(password: &str) -> bool {
-    let pwd = password.to_string();
-    let login = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
-    tokio::task::spawn_blocking(move || {
-        let mut client = match pam::Client::with_password("polkit-1") {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        client
-            .conversation_mut()
-            .set_credentials(&login, &pwd);
-        client.authenticate().is_ok()
-    })
-    .await
-    .unwrap_or(false)
 }
 
 async fn register_polkit_agent(
