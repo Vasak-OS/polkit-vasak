@@ -38,6 +38,8 @@ tokio = { version = "1", features = ["full"] }
 pam = "0.8"
 zvariant = "4"
 libc = "0.2"
+# Para que la contraseña no quede en la memoria de un proceso que corre como root.
+zeroize = "1"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
