@@ -247,7 +247,8 @@ async fn call_authentication_helper(
                 .stdin
                 .as_mut()
                 .ok_or_else(|| "helper stdin unavailable".to_string())?;
-            // Line 1: cookie, line 2: password. Neither contains a newline.
+            // Line 1: cookie, then the password (which may itself contain
+            // newlines — the helper takes everything after the first one).
             stdin
                 .write_all(format!("{cookie}\n{password}\n").as_bytes())
                 .map_err(|e| format!("write helper stdin: {e}"))?;

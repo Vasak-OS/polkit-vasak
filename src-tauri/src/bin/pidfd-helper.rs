@@ -24,10 +24,18 @@
 use std::collections::HashMap;
 use std::env;
 use std::ffi::CStr;
-use std::io::BufRead;
+use std::io::Read;
 use std::os::fd::{FromRawFd, OwnedFd};
 use zbus::Connection;
+use zeroize::Zeroizing;
 use zvariant::{Fd, Value};
+
+/// Hasta cuánto se lee de la entrada.
+///
+/// Esto corre como root y cualquiera del sistema puede ejecutarlo: sin techo,
+/// alimentarle gigabytes por la entrada es agotar memoria con privilegios. Una
+/// cookie y una contraseña no llegan ni a un kilobyte.
+const LIMITE_ENTRADA: u64 = 64 * 1024;
 
 fn get_arg(args: &[String], name: &str) -> String {
     let pos = args.iter().position(|a| a == name).unwrap_or_else(|| {
@@ -40,6 +48,29 @@ fn get_arg(args: &[String], name: &str) -> String {
     })
 }
 
+/// Índice de `starttime` una vez saltado el `comm`.
+///
+/// En `/proc/<pid>/stat` es el campo 22 contando desde uno. Después del `) ` el
+/// primero es el 3 —el estado—, así que 22 - 3 = 19. Equivocarse acá manda a
+/// polkitd un tiempo de arranque que no es el del proceso, y la respuesta se
+/// rechaza: el diálogo pide la contraseña, la acepta, y la acción no pasa.
+const INDICE_STARTTIME: usize = 19;
+
+/// El tiempo de arranque, a partir del contenido de `/proc/<pid>/stat`.
+///
+/// Separada de la lectura para poder probarla: el `comm` de un proceso puede
+/// contener espacios y paréntesis, así que partir por espacios sin más deja todos
+/// los campos corridos.
+fn parse_start_time(data: &str) -> Option<u64> {
+    // Se busca el **último** `") "`: un proceso puede llamarse `algo) raro`, y con
+    // `find` en lugar de `rfind` el corte cae dentro del nombre.
+    let after_comm = data.rfind(") ")?;
+    data[after_comm + 2..]
+        .split_whitespace()
+        .nth(INDICE_STARTTIME)
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
 fn get_start_time(pid: u32) -> u64 {
     let path = format!("/proc/{pid}/stat");
     let data = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -47,18 +78,27 @@ fn get_start_time(pid: u32) -> u64 {
         std::process::exit(1);
     });
 
-    // The comm field may contain spaces/parens, so scan past the final ") ".
-    let after_comm = data.rfind(") ").unwrap_or_else(|| {
-        eprintln!("Cannot parse {path}: no ') ' found");
-        std::process::exit(1);
-    });
-    let rest = &data[after_comm + 2..];
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-
-    fields.get(19).and_then(|s| s.parse::<u64>().ok()).unwrap_or_else(|| {
+    parse_start_time(&data).unwrap_or_else(|| {
         eprintln!("Cannot parse starttime from {path}");
         std::process::exit(1);
     })
+}
+
+/// Separa la cookie de la contraseña en lo que llegó por la entrada.
+///
+/// El formato es `cookie\ncontraseña\n`. La contraseña es **todo** lo que viene
+/// después del primer salto, no la segunda línea: una contraseña con un salto
+/// adentro se truncaba en silencio y la autenticación fallaba siempre, sin que
+/// nada dijera por qué. La cookie la pone polkitd y no lleva saltos.
+fn parse_stdin(datos: &str) -> Option<(String, Zeroizing<String>)> {
+    let (cookie, resto) = datos.split_once('\n')?;
+    if cookie.is_empty() {
+        return None;
+    }
+    // Se quita **un** salto final, el que agrega el emisor. Los demás son parte de
+    // la contraseña.
+    let password = resto.strip_suffix('\n').unwrap_or(resto);
+    Some((cookie.to_string(), Zeroizing::new(password.to_string())))
 }
 
 /// Resolve a username from a uid via the passwd database.
@@ -128,14 +168,18 @@ fn main() {
     // --- secrets come from stdin, never argv ------------------------------
     // Line 1: cookie, line 2: password. Keeping them off argv avoids leaking
     // them through `ps` / `/proc/<pid>/cmdline`.
-    let stdin = std::io::stdin();
-    let mut lines = stdin.lock().lines();
-    let cookie = lines.next().and_then(|r| r.ok()).unwrap_or_else(|| {
-        eprintln!("[polkit-helper] missing cookie on stdin");
+    let mut entrada = Zeroizing::new(String::new());
+    if let Err(e) = std::io::stdin()
+        .lock()
+        .take(LIMITE_ENTRADA)
+        .read_to_string(&mut entrada)
+    {
+        eprintln!("[polkit-helper] cannot read stdin: {e}");
         std::process::exit(1);
-    });
-    let password = lines.next().and_then(|r| r.ok()).unwrap_or_else(|| {
-        eprintln!("[polkit-helper] missing password on stdin");
+    }
+
+    let (cookie, password) = parse_stdin(&entrada).unwrap_or_else(|| {
+        eprintln!("[polkit-helper] malformed stdin (expected cookie and password)");
         std::process::exit(1);
     });
 
@@ -199,4 +243,120 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Una línea real de `/proc/1/stat` de esta máquina.
+    ///
+    /// Real y no inventada: el formato tiene cincuenta y dos campos y una
+    /// inventada puede coincidir con un índice equivocado por casualidad.
+    const STAT_DE_SYSTEMD: &str = "1 (systemd) S 0 1 1 0 -1 4194560 61612 1335791 21509 2562 266 269 6941 3804 20 0 1 0 10 22003712 1171 18446744073709551615 1 1 0 0 0 0 671173123 4096 1260 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0\n";
+
+    #[test]
+    fn el_tiempo_de_arranque_es_el_campo_veintidos() {
+        // Si el índice está mal, se le manda a polkitd un tiempo que no es el del
+        // proceso y la respuesta se rechaza: el diálogo pide la contraseña, la
+        // acepta, y la acción no pasa. Falla de la forma más confusa posible.
+        assert_eq!(parse_start_time(STAT_DE_SYSTEMD), Some(10));
+    }
+
+    #[test]
+    fn un_nombre_de_proceso_con_espacios_no_corre_los_campos() {
+        // El `comm` es lo que el proceso puso en su nombre, y puede tener espacios.
+        // Partiendo por espacios sin saltarlo, todos los campos quedan corridos.
+        let linea = STAT_DE_SYSTEMD.replace("(systemd)", "(un nombre con espacios)");
+        assert_eq!(parse_start_time(&linea), Some(10));
+    }
+
+    #[test]
+    fn un_nombre_con_parentesis_y_espacio_adentro_tampoco() {
+        // Un proceso puede llamarse `algo) raro`. Buscando el **primer** `") "` en
+        // lugar del último, el corte cae dentro del nombre.
+        let linea = STAT_DE_SYSTEMD.replace("(systemd)", "(algo) raro)");
+        assert_eq!(parse_start_time(&linea), Some(10));
+    }
+
+    #[test]
+    fn una_linea_sin_sentido_no_devuelve_un_numero_inventado() {
+        // Devolver un tiempo cualquiera sería peor que no devolver nada: ataría la
+        // respuesta a un proceso que no es el que preguntó.
+        assert_eq!(parse_start_time(""), None);
+        assert_eq!(parse_start_time("sin parentesis"), None);
+        assert_eq!(parse_start_time("1 (a) S 0 1"), None, "faltan campos");
+        assert_eq!(parse_start_time("1 (a) S 0 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 no-numero 0"), None);
+    }
+
+    #[test]
+    fn la_cookie_y_la_contraseña_se_separan_en_el_primer_salto() {
+        let (cookie, password) = parse_stdin("la-cookie\nla-contraseña\n").expect("parsea");
+        assert_eq!(cookie, "la-cookie");
+        assert_eq!(*password, "la-contraseña");
+    }
+
+    #[test]
+    fn una_contraseña_con_saltos_adentro_no_se_trunca() {
+        // Antes se leía sólo la segunda línea, así que una contraseña con un salto
+        // se cortaba en silencio: la autenticación fallaba **siempre** y nada decía
+        // por qué. La cookie la pone polkitd y no lleva saltos.
+        let (cookie, password) = parse_stdin("c\nuna\ncon\nsaltos\n").expect("parsea");
+        assert_eq!(cookie, "c");
+        assert_eq!(*password, "una\ncon\nsaltos");
+    }
+
+    #[test]
+    fn solo_se_quita_un_salto_final() {
+        // El que agrega el emisor. Los demás son parte de la contraseña, y quitar
+        // más haría fallar una contraseña que termina en un salto.
+        let (_, password) = parse_stdin("c\nclave\n\n").expect("parsea");
+        assert_eq!(*password, "clave\n");
+    }
+
+    #[test]
+    fn una_contraseña_vacia_se_pasa_a_pam_y_no_se_acepta_sola() {
+        // Que esté vacía no lo decide este helper: lo decide PAM, que con
+        // `nullok` fuera es un rechazo. Lo que importa es que no se confunda con
+        // una entrada mal formada.
+        let (cookie, password) = parse_stdin("c\n\n").expect("parsea");
+        assert_eq!(cookie, "c");
+        assert_eq!(*password, "");
+    }
+
+    #[test]
+    fn una_entrada_sin_salto_no_pasa() {
+        // Sin salto no hay contraseña, sólo una cookie: seguir con una contraseña
+        // vacía sería intentar autenticar con nada.
+        assert_eq!(parse_stdin("solo-una-cookie").map(|(c, _)| c), None);
+        assert_eq!(parse_stdin("").map(|(c, _)| c), None);
+    }
+
+    #[test]
+    fn una_cookie_vacia_no_pasa() {
+        // La cookie es lo que ata la respuesta a la pregunta de polkitd. Vacía, la
+        // respuesta no corresponde a nada.
+        assert_eq!(parse_stdin("\nsolo-contraseña\n").map(|(c, _)| c), None);
+    }
+
+    #[test]
+    fn el_techo_de_entrada_alcanza_de_sobra_y_acota() {
+        // Esto corre como root y cualquiera puede ejecutarlo: sin techo,
+        // alimentarle gigabytes por la entrada agota memoria con privilegios.
+        // 64 KiB: una cookie y una contraseña no llegan ni a un kilobyte, así que
+        // sobra de largo, y acota lo que un local puede hacerle tragar.
+        assert_eq!(LIMITE_ENTRADA, 64 * 1024);
+    }
+
+    #[test]
+    fn el_argumento_repetido_toma_el_primero() {
+        // Documenta el comportamiento en lugar de dejarlo al azar: quien ejecute
+        // esto directamente igual tiene que saber la contraseña de la identidad
+        // que pida, y polkitd comprueba por su lado que sea una que ofreció.
+        let args: Vec<String> = ["--identity-uid", "1000", "--identity-uid", "0"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(get_arg(&args, "--identity-uid"), "1000");
+    }
 }
