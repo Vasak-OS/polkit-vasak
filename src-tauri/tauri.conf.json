@@ -14,7 +14,7 @@
       {
         "title": "Autenticación requerida",
         "width": 400,
-        "height": 200,
+        "height": 280,
         "decorations": false,
         "transparent": true,
         "visible": false,
