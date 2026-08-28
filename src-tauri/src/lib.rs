@@ -1,3 +1,5 @@
+mod locales;
+
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -366,6 +368,10 @@ pub fn run() {
         .manage(AppState {
             pending: pending.clone(),
         })
+        .plugin(tauri_plugin_i18n_vsk::init_with_path(
+            Some(locales::idioma_del_sistema()),
+            locales::directorio(),
+        ))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_config_manager::init())
         .plugin(tauri_plugin_vicons::init())
