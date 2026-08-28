@@ -29,7 +29,6 @@ let unlistenRequest: UnlistenFn | null = null;
 let unlistenResult: UnlistenFn | null = null;
 
 const shieldIcon = useReactiveIcon(() => getIconSource('dialog-password'));
-
 async function submit() {
 	if (!password.value || !cookie.value || loading.value) return;
 
@@ -102,7 +101,7 @@ onUnmounted(() => {
     <div
       v-if="visible"
       :class="[
-        'h-screen w-screen flex gap-4 rounded-corner-window border border-ui-border bg-ui-bg p-5',
+        'h-screen w-screen flex gap-4 overflow-hidden rounded-corner-window border border-ui-border bg-ui-bg/80 p-5',
         shaking ? 'animate-shake' : '',
       ]"
     >
@@ -116,7 +115,16 @@ onUnmounted(() => {
       <div class="flex flex-col gap-3 min-w-0 flex-1">
         <span class="text-xs text-tx-muted tracking-wide uppercase">Autenticación requerida</span>
 
-        <p class="text-sm text-tx-main leading-snug">{{ message }}</p>
+        <!-- El mensaje lo escribe la acción de polkit que pidió permiso, y hay
+             algunas largas: la de limpiar paquetes huérfanos lleva el comando
+             entero adentro. Antes desbordaba y aparecía una barra de
+             desplazamiento dentro de un diálogo modal, que además tapaba los
+             botones.
+             Ahora la ventana es más alta y el texto se recorta con puntos
+             suspensivos en la cantidad de renglones que siempre entra: recortar
+             es preferible a una barra, y el texto completo queda en el `title`
+             para quien lo necesite. -->
+        <p class="text-sm text-tx-main leading-snug line-clamp-6" :title="message">{{ message }}</p>
 
         <form
           class="flex flex-col gap-2"
