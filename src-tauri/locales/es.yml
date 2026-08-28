@@ -1,0 +1,10 @@
+_version: 1
+
+polkit:
+  title: Autenticación requerida
+  password: Contraseña
+  cancel: Cancelar
+  accept: Aceptar
+  checking: Verificando…
+  wrongPassword: La contraseña no es correcta. Probá de nuevo.
+  sendError: No se pudo enviar la contraseña.

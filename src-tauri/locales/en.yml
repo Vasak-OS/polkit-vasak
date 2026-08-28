@@ -1,0 +1,10 @@
+_version: 1
+
+polkit:
+  title: Authentication required
+  password: Password
+  cancel: Cancel
+  accept: Accept
+  checking: Checking…
+  wrongPassword: That password is not correct. Try again.
+  sendError: The password could not be sent.

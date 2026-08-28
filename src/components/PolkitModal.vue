@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getIconSource } from '@vasakgroup/plugin-vicons';
+import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import { nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useReactiveIcon } from '@/composables/useReactiveIcon';
 
@@ -15,6 +16,8 @@ interface PolkitResult {
 	cookie: string;
 	message?: string;
 }
+
+const { t } = useI18n();
 
 const visible = ref(false);
 const message = ref('');
@@ -38,7 +41,7 @@ async function submit() {
 		password: password.value,
 		cookie: cookie.value,
 	}).catch((e: any) => {
-		error.value = typeof e === 'string' ? e : 'Error al enviar la contraseña';
+		error.value = typeof e === 'string' ? e : t('polkit.sendError');
 		loading.value = false;
 	});
 }
@@ -80,7 +83,7 @@ onMounted(async () => {
 		if (event.payload.success) {
 			visible.value = false;
 		} else {
-			error.value = event.payload.message || 'Contraseña incorrecta. Intente de nuevo.';
+			error.value = event.payload.message || t('polkit.wrongPassword');
 			password.value = '';
 			loading.value = false;
 			triggerShake();
@@ -113,7 +116,7 @@ onUnmounted(() => {
       />
 
       <div class="flex flex-col gap-3 min-w-0 flex-1">
-        <span class="text-xs text-tx-muted tracking-wide uppercase">Autenticación requerida</span>
+        <span class="text-xs text-tx-muted tracking-wide uppercase">{{ t('polkit.title') }}</span>
 
         <!-- El mensaje lo escribe la acción de polkit que pidió permiso, y hay
              algunas largas: la de limpiar paquetes huérfanos lleva el comando
@@ -134,7 +137,7 @@ onUnmounted(() => {
             ref="inputRef"
             v-model="password"
             type="password"
-            placeholder="Contraseña"
+            :placeholder="t('polkit.password')"
             autocomplete="current-password"
             class="w-full rounded-corner border border-ui-border bg-ui-surface/50 px-3 py-1.5 text-sm text-tx-main placeholder:text-tx-muted/60 outline-none focus:border-primary transition-colors"
           />
@@ -152,7 +155,7 @@ onUnmounted(() => {
               class="rounded-corner border border-ui-border px-4 py-1 text-sm text-tx-main transition-colors hover:bg-ui-surface/50"
               @click="cancel"
             >
-              Cancelar
+              {{ t('polkit.cancel') }}
             </button>
 
             <button
@@ -160,8 +163,8 @@ onUnmounted(() => {
               :disabled="loading || !password"
               class="rounded-corner bg-primary px-4 py-1 text-sm font-medium text-tx-on-primary transition-opacity enabled:hover:opacity-90 disabled:opacity-50"
             >
-              <span v-if="loading">Verificando…</span>
-              <span v-else>Aceptar</span>
+              <span v-if="loading">{{ t('polkit.checking') }}</span>
+              <span v-else>{{ t('polkit.accept') }}</span>
             </button>
           </div>
         </form>
