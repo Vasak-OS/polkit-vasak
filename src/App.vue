@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
-import type { Store } from 'pinia';
 import { onMounted } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
 
@@ -12,10 +11,7 @@ import PolkitModal from '@/components/PolkitModal.vue';
 onMounted(() => {
 	// El tipo del store llega genérico desde el plugin; el mismo molde que usa
 	// la pantalla de bloqueo.
-	const configuracion = useConfigStore() as Store<
-		'config',
-		{ config: unknown; loadConfig: () => Promise<void> }
-	>;
+	const configuracion = useConfigStore();
 	configuracion.loadConfig().catch(() => {
 		// Con los colores por omisión sigue siendo un diálogo usable; lo que no
 		// puede es no aparecer.
