@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getIconSource } from '@vasakgroup/plugin-vicons';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { useDialogos } from '@/composables/useDialogos';
 import { useReactiveIcon } from '@/composables/useReactiveIcon';
 
 interface PolkitRequest {
@@ -18,8 +19,11 @@ interface PolkitResult {
 }
 
 const { t } = useI18n();
+// La ventana es una sola y ahora hay otro diálogo compartiéndola. Ver
+// `dialogoVisible`.
+const { activo, polkitPidiendo } = useDialogos();
 
-const visible = ref(false);
+const visible = computed(() => activo.value === 'polkit');
 const message = ref('');
 const cookie = ref('');
 const password = ref('');
@@ -52,7 +56,7 @@ function onKeydown(e: KeyboardEvent) {
 
 async function cancel() {
 	if (!cookie.value) return;
-	visible.value = false;
+	polkitPidiendo.value = false;
 	password.value = '';
 	error.value = '';
 	loading.value = false;
@@ -75,13 +79,13 @@ onMounted(async () => {
 		password.value = '';
 		error.value = '';
 		loading.value = false;
-		visible.value = true;
+		polkitPidiendo.value = true;
 		nextTick(() => inputRef.value?.focus());
 	});
 
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
 		if (event.payload.success) {
-			visible.value = false;
+			polkitPidiendo.value = false;
 		} else {
 			error.value = event.payload.message || t('polkit.wrongPassword');
 			password.value = '';
@@ -172,31 +176,3 @@ onUnmounted(() => {
     </div>
   </Transition>
 </template>
-
-<style>
-.dialog-enter-active {
-  transition: opacity 0.25s ease-out, transform 0.25s ease-out !important;
-}
-.dialog-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in !important;
-}
-.dialog-enter-from {
-  opacity: 0 !important;
-  transform: scale(0.92) !important;
-}
-.dialog-leave-to {
-  opacity: 0 !important;
-  transform: scale(0.92) !important;
-}
-
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-8px); }
-  40% { transform: translateX(8px); }
-  60% { transform: translateX(-5px); }
-  80% { transform: translateX(5px); }
-}
-.animate-shake {
-  animation: shake 0.4s ease-in-out !important;
-}
-</style>

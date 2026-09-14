@@ -8,3 +8,14 @@ polkit:
   checking: Verificando…
   wrongPassword: La contraseña no es correcta. Probá de nuevo.
   sendError: No se pudo enviar la contraseña.
+
+unlock:
+  title: Disco cifrado
+  prompt: Escribí la frase de paso de {0} para abrirlo.
+  passphrase: Frase de paso
+  remember: Recordarla en el llavero
+  cancel: Cancelar
+  accept: Abrir
+  unlocking: Abriendo…
+  wrongPassphrase: La frase de paso no es correcta. Probá de nuevo.
+  sendError: No se pudo enviar la frase de paso.

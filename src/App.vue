@@ -2,6 +2,7 @@
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
+import UnlockModal from '@/components/UnlockModal.vue';
 
 // Sin esto el diálogo se queda con los colores por omisión —claros— aunque el
 // escritorio esté en tema oscuro: los colores llegan por la configuración, como
@@ -20,5 +21,8 @@ onMounted(() => {
 </script>
 
 <template>
+  <!-- Los dos comparten la ventana y nunca se ven juntos: cuál aparece lo decide
+       `dialogoVisible`. -->
   <PolkitModal />
+  <UnlockModal />
 </template>
