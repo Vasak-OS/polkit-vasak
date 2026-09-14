@@ -8,3 +8,14 @@ polkit:
   checking: Checking…
   wrongPassword: That password is not correct. Try again.
   sendError: The password could not be sent.
+
+unlock:
+  title: Encrypted disk
+  prompt: Enter the passphrase for {0} to open it.
+  passphrase: Passphrase
+  remember: Remember it in the keyring
+  cancel: Cancel
+  accept: Open
+  unlocking: Opening…
+  wrongPassphrase: That passphrase is not correct. Try again.
+  sendError: The passphrase could not be sent.

@@ -1,4 +1,7 @@
+mod desbloqueo;
+mod llavero;
 mod locales;
+mod udisks;
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -163,10 +166,9 @@ impl PolkitAgent {
 
         self.pending.lock().expect("lock pending").remove(&cookie);
 
-        let _ = self.app_handle.emit(
-            "polkit-cancel",
-            serde_json::json!({ "cookie": cookie }),
-        );
+        let _ = self
+            .app_handle
+            .emit("polkit-cancel", serde_json::json!({ "cookie": cookie }));
     }
 }
 
@@ -183,16 +185,15 @@ async fn submit_password(
         .remove(&cookie)
         .ok_or_else(|| format!("No pending auth for cookie: {cookie}"))?;
 
-    tx.send(password).map_err(|_| "Receiver dropped".to_string())?;
+    tx.send(password)
+        .map_err(|_| "Receiver dropped".to_string())?;
     Ok(true)
 }
 
 #[tauri::command]
-async fn cancel_pending(
-    state: State<'_, AppState>,
-    cookie: String,
-) -> Result<(), String> {
-    state.pending
+async fn cancel_pending(state: State<'_, AppState>, cookie: String) -> Result<(), String> {
+    state
+        .pending
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&cookie);
@@ -204,8 +205,7 @@ async fn cancel_pending(
 /// Prefer a copy next to the running agent (dev builds), then the installed
 /// path.
 fn resolve_helper_path() -> Result<std::path::PathBuf, String> {
-    let mut sibling =
-        std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let mut sibling = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     sibling.set_file_name("polkit-agent-helper-dbus");
     if sibling.exists() {
         return Ok(sibling);
@@ -286,6 +286,7 @@ async fn register_polkit_agent(
     app_handle: AppHandle,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
     session_map: Arc<Mutex<HashMap<String, String>>>,
+    desbloqueos: desbloqueo::DialogosPendientes,
 ) {
     let conn = zbus::Connection::system()
         .await
@@ -298,14 +299,14 @@ async fn register_polkit_agent(
     };
 
     conn.object_server()
-        .at(
-            "/org/freedesktop/PolicyKit1/AuthenticationAgent",
-            agent,
-        )
+        .at("/org/freedesktop/PolicyKit1/AuthenticationAgent", agent)
         .await
         .expect("Failed to register agent object on D-Bus");
 
-    eprintln!("[vasak-polkit] Bus unique name: {}", conn.unique_name().map(|n| n.as_str()).unwrap_or("?"));
+    eprintln!(
+        "[vasak-polkit] Bus unique name: {}",
+        conn.unique_name().map(|n| n.as_str()).unwrap_or("?")
+    );
 
     let known_sessions = [
         std::env::var("XDG_SESSION_ID").ok(),
@@ -318,10 +319,7 @@ async fn register_polkit_agent(
     for sid in known_sessions.into_iter().flatten() {
         let subject: (&str, HashMap<String, Value<'_>>) = (
             "unix-session",
-            HashMap::from([(
-                "session-id".to_string(),
-                Value::Str(sid.clone().into()),
-            )]),
+            HashMap::from([("session-id".to_string(), Value::Str(sid.clone().into()))]),
         );
 
         let result = conn
@@ -354,6 +352,13 @@ async fn register_polkit_agent(
         eprintln!("[vasak-polkit] Failed to register with any session");
     }
 
+    // El desbloqueo de discos cifrados va en el bus de sesión, y es
+    // independiente de todo lo de arriba: que no se pueda publicar deja al
+    // escritorio sin abrir discos, no sin autenticar. Ver `desbloqueo`.
+    if let Err(error) = desbloqueo::publicar(app_handle, desbloqueos).await {
+        eprintln!("[vasak-polkit] sin desbloqueo de discos: {error}");
+    }
+
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
     }
@@ -364,10 +369,13 @@ pub fn run() {
     let pending = Arc::new(Mutex::new(HashMap::new()));
     let session_map = Arc::new(Mutex::new(HashMap::new()));
 
+    let desbloqueos = desbloqueo::DialogosPendientes::default();
+
     tauri::Builder::default()
         .manage(AppState {
             pending: pending.clone(),
         })
+        .manage(desbloqueos.clone())
         .plugin(tauri_plugin_i18n_vsk::init_with_path(
             Some(locales::idioma_del_sistema()),
             locales::directorio(),
@@ -379,18 +387,24 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let p = pending.clone();
             let sm = session_map.clone();
+            let d = desbloqueos.clone();
 
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new()
                     .expect("Failed to create Tokio runtime for D-Bus agent");
                 rt.block_on(async {
-                    register_polkit_agent(app_handle, p, sm).await;
+                    register_polkit_agent(app_handle, p, sm, d).await;
                 });
             });
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![submit_password, cancel_pending])
+        .invoke_handler(tauri::generate_handler![
+            submit_password,
+            cancel_pending,
+            desbloqueo::enviar_frase,
+            desbloqueo::cancelar_desbloqueo
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

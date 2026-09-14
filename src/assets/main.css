@@ -2,6 +2,11 @@
    fija el color del texto y el bloque de `@layer base` fija `border-color`. La
    regla compara selectores sin mirar qué propiedad tocan, así que ve un conflicto
    donde no hay ninguno: ninguna de las dos declaraciones puede pisar a la otra. */
+/* biome-ignore-all lint/complexity/noImportantStyles: las reglas de animación de
+   los diálogos conviven en el mismo elemento con las utilidades de Tailwind, que
+   se generan con la misma especificidad y ganan por orden de aparición. Estaban
+   así desde que vivían dentro del componente; mudarlas a este archivo no cambia
+   contra qué compiten. */
 @import "tailwindcss";
 
 :root {
@@ -197,4 +202,49 @@ body * {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* ── La animación de los diálogos ───────────────────────────────────────────
+   Vive acá y no adentro de un componente porque la usan los dos —el de polkit y
+   el de los discos cifrados— y comparten la ventana: si la definiera uno, el
+   otro dependería de que ese estuviera montado para aparecer bien. */
+.dialog-enter-active {
+  transition:
+    opacity 0.25s ease-out,
+    transform 0.25s ease-out !important;
+}
+.dialog-leave-active {
+  transition:
+    opacity 0.2s ease-in,
+    transform 0.2s ease-in !important;
+}
+.dialog-enter-from {
+  opacity: 0 !important;
+  transform: scale(0.92) !important;
+}
+.dialog-leave-to {
+  opacity: 0 !important;
+  transform: scale(0.92) !important;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  60% {
+    transform: translateX(-5px);
+  }
+  80% {
+    transform: translateX(5px);
+  }
+}
+.animate-shake {
+  animation: shake 0.4s ease-in-out !important;
 }
