@@ -1,7 +1,7 @@
 {
   "name": "vasak-polkit-agent",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",

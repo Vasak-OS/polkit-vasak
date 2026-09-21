@@ -19,3 +19,13 @@ jobs:
     permissions:
       contents: read
     uses: Vasak-OS/.github/.github/workflows/app.yml@main
+    with:
+      # El guardia de bibliotecas propias corta acá en vez de sólo avisar.
+      #
+      # Empieza apagado en el workflow compartido porque al estrenarse quince
+      # repositorios estaban atrás y hacerlo fallar de entrada habría bloqueado
+      # hasta el trabajo de ponerse al día. Éste ya está al día —las cuatro
+      # `@vasakgroup/*` en su última—, así que se enciende y deja de poder
+      # quedarse atrás sin que nada falle, que es exactamente como se quedó en
+      # la 0.7 de la librería durante ocho versiones.
+      bibliotecas_cortan: true

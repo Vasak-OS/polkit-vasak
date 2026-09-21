@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getIconSource } from '@vasakgroup/plugin-vicons';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { TextInput, ThemeIcon } from '@vasakgroup/vue-libvasak';
+import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
 import { useDialogos } from '@/composables/useDialogos';
-import { useReactiveIcon } from '@/composables/useReactiveIcon';
 import { interpolar } from '@/tools/interpolar';
 
 interface PedidoDeDesbloqueo {
@@ -26,15 +25,18 @@ const recordar = ref(false);
 const error = ref('');
 const enviando = ref(false);
 const temblando = ref(false);
-const campo = ref<HTMLInputElement | null>(null);
+const campo = ref<InstanceType<typeof TextInput> | null>(null);
+
+/**
+ * El `id` del renglón del error, para que el campo lo apunte.
+ *
+ * Sin `aria-describedby`, quien no ve la pantalla oye que el campo es inválido
+ * y nunca por qué.
+ */
+const idDelError = useId();
 
 let dejarDeEscucharPedido: UnlistenFn | null = null;
 let dejarDeEscucharFin: UnlistenFn | null = null;
-
-// Un disco con candado, no el escudo de polkit: la contraseña de la cuenta y la
-// frase de un disco son preguntas distintas y tienen que verse distintas. Ver
-// `desbloqueo.rs`.
-const iconoDeDisco = useReactiveIcon(() => getIconSource('drive-harddisk-encrypted'));
 
 const visible = computed(() => activo.value === 'desbloqueo');
 
@@ -116,7 +118,7 @@ onMounted(async () => {
 			error.value = '';
 		}
 
-		nextTick(() => campo.value?.focus());
+		nextTick(() => campo.value?.enfocar());
 	});
 
 	// El desbloqueo terminó —bien o mal— y la ventana se va. Quien avisa de qué
@@ -142,12 +144,10 @@ onUnmounted(() => {
         temblando ? 'animate-shake' : '',
       ]"
     >
-      <img
-        v-if="iconoDeDisco"
-        :src="iconoDeDisco"
-        class="self-stretch h-auto w-20 shrink-0 object-scale-down"
-        alt=""
-      />
+      <!-- Un disco con candado, no el escudo de polkit: la contraseña de la
+           cuenta y la frase de un disco son preguntas distintas y tienen que
+           verse distintas. -->
+      <ThemeIcon name="drive-harddisk-encrypted" :size="80" class="self-start" />
 
       <div class="flex flex-col gap-3 min-w-0 flex-1">
         <span class="text-xs text-tx-muted tracking-wide uppercase">{{ t('unlock.title') }}</span>
@@ -155,13 +155,15 @@ onUnmounted(() => {
         <p class="text-sm text-tx-main leading-snug line-clamp-3" :title="mensaje">{{ mensaje }}</p>
 
         <form class="flex flex-col gap-2" @submit.prevent="enviar">
-          <input
+          <TextInput
             ref="campo"
             v-model="frase"
             type="password"
+            :ariaLabel="t('unlock.passphrase')"
             :placeholder="t('unlock.passphrase')"
             autocomplete="off"
-            class="w-full rounded-corner border border-ui-border bg-ui-surface/50 px-3 py-1.5 text-sm text-tx-main placeholder:text-tx-muted/60 outline-none focus:border-primary transition-colors"
+            :invalid="!!error"
+            :describedBy="idDelError"
           />
 
           <label class="flex items-center gap-2 text-xs text-tx-muted cursor-pointer">
@@ -169,7 +171,11 @@ onUnmounted(() => {
             {{ t('unlock.remember') }}
           </label>
 
-          <p v-if="error" class="text-xs text-status-error">{{ error }}</p>
+          <!-- `role="alert"` porque aparece después de intentar: sin eso,
+               escribir mal la frase no dice nada a quien no mira la pantalla. -->
+          <p v-if="error" :id="idDelError" role="alert" class="text-xs text-status-error">
+            {{ error }}
+          </p>
 
           <div class="flex justify-end gap-2 pt-1">
             <button
