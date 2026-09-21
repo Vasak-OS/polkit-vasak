@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getIconSource } from '@vasakgroup/plugin-vicons';
 import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
-import { WindowFrame } from '@vasakgroup/vue-libvasak';
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { TextInput, ThemeIcon, WindowFrame } from '@vasakgroup/vue-libvasak';
+import { computed, nextTick, onMounted, onUnmounted, ref, useId } from 'vue';
 import { useDialogos } from '@/composables/useDialogos';
-import { useReactiveIcon } from '@/composables/useReactiveIcon';
 
 interface PolkitRequest {
 	message: string;
@@ -31,12 +29,19 @@ const password = ref('');
 const error = ref('');
 const loading = ref(false);
 const shaking = ref(false);
-const inputRef = ref<HTMLInputElement | null>(null);
+const inputRef = ref<InstanceType<typeof TextInput> | null>(null);
+
+/**
+ * El `id` del renglón del error, para que el campo lo apunte.
+ *
+ * Sin `aria-describedby`, quien no ve la pantalla oye que el campo es inválido
+ * y nunca por qué: «contraseña incorrecta» se dibuja al lado y no se dice.
+ */
+const idDelError = useId();
 
 let unlistenRequest: UnlistenFn | null = null;
 let unlistenResult: UnlistenFn | null = null;
 
-const shieldIcon = useReactiveIcon(() => getIconSource('dialog-password'));
 async function submit() {
 	if (!password.value || !cookie.value || loading.value) return;
 
@@ -81,7 +86,7 @@ onMounted(async () => {
 		error.value = '';
 		loading.value = false;
 		polkitPidiendo.value = true;
-		nextTick(() => inputRef.value?.focus());
+		nextTick(() => inputRef.value?.enfocar());
 	});
 
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
@@ -92,7 +97,7 @@ onMounted(async () => {
 			password.value = '';
 			loading.value = false;
 			triggerShake();
-			nextTick(() => inputRef.value?.focus());
+			nextTick(() => inputRef.value?.enfocar());
 		}
 	});
 });
@@ -116,12 +121,7 @@ onUnmounted(() => {
       :class="shaking ? 'animate-shake' : ''"
     >
       <div class="flex min-w-0 flex-1 gap-4 p-5">
-        <img
-          v-if="shieldIcon"
-          :src="shieldIcon"
-          class="self-stretch h-auto w-20 shrink-0 object-scale-down"
-          alt=""
-        />
+        <ThemeIcon name="dialog-password" :size="80" class="self-start" />
 
         <div class="flex flex-col gap-3 min-w-0 flex-1">
           <span class="text-xs text-tx-muted tracking-wide uppercase">{{ t('polkit.title') }}</span>
@@ -141,17 +141,24 @@ onUnmounted(() => {
             class="flex flex-col gap-2"
             @submit.prevent="submit"
           >
-            <input
+            <TextInput
               ref="inputRef"
               v-model="password"
               type="password"
+              :ariaLabel="t('polkit.password')"
               :placeholder="t('polkit.password')"
               autocomplete="current-password"
-              class="w-full rounded-corner border border-ui-border bg-ui-surface/50 px-3 py-1.5 text-sm text-tx-main placeholder:text-tx-muted/60 outline-none focus:border-primary transition-colors"
+              :invalid="!!error"
+              :describedBy="error ? idDelError : undefined"
             />
 
+            <!-- `role="alert"` porque aparece después de intentar: sin eso,
+                 escribir mal la contraseña no dice nada a quien no mira la
+                 pantalla, y el diálogo parece no haber hecho nada. -->
             <p
               v-if="error"
+              :id="idDelError"
+              role="alert"
               class="text-xs text-status-error"
             >
               {{ error }}
