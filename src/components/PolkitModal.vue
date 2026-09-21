@@ -149,7 +149,7 @@ onUnmounted(() => {
               :placeholder="t('polkit.password')"
               autocomplete="current-password"
               :invalid="!!error"
-              :describedBy="idDelError"
+              :describedBy="error ? idDelError : undefined"
             />
 
             <!-- `role="alert"` porque aparece después de intentar: sin eso,

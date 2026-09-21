@@ -90,11 +90,18 @@ describe('el campo de contraseña de polkit', () => {
 		expect(abierto.findComponent(TextInput).exists()).toBe(true);
 	});
 
-	test('sin error no dice que sea inválido', async () => {
+	test('sin error no dice que sea inválido ni apunta a un renglón que no está', async () => {
+		// El renglón del error vive bajo un `v-if`: mientras no haya error no
+		// existe ningún elemento con ese id. `TextInput` escribe
+		// `aria-describedby` con lo que le pasen, sin mirar si apunta a algo, así
+		// que pasarle el id siempre deja al campo describiéndose con un elemento
+		// ausente —y un `aria-describedby` colgado no es neutro: el lector de
+		// pantalla se queda sin la descripción que promete.
 		const abierto = await pedirAutorizacion();
 		const campo = abierto.find('input[type="password"]');
 
 		expect(campo.attributes('aria-invalid')).toBeUndefined();
+		expect(campo.attributes('aria-describedby')).toBeUndefined();
 	});
 });
 
@@ -105,6 +112,14 @@ describe('la frase del disco cifrado', () => {
 		expect(abierto.find('input[type="password"]').attributes('aria-label')).toBe(
 			'unlock.passphrase'
 		);
+	});
+
+	test('y sin error tampoco cuelga de un renglón ausente', async () => {
+		const abierto = await pedirFrase();
+		const campo = abierto.find('input[type="password"]');
+
+		expect(abierto.find('[role="alert"]').exists()).toBe(false);
+		expect(campo.attributes('aria-describedby')).toBeUndefined();
 	});
 
 	test('y cuando la frase anterior no abrió, el error se anuncia y cuelga del campo', async () => {

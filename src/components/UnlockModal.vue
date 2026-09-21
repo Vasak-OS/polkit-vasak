@@ -163,7 +163,7 @@ onUnmounted(() => {
             :placeholder="t('unlock.passphrase')"
             autocomplete="off"
             :invalid="!!error"
-            :describedBy="idDelError"
+            :describedBy="error ? idDelError : undefined"
           />
 
           <label class="flex items-center gap-2 text-xs text-tx-muted cursor-pointer">
