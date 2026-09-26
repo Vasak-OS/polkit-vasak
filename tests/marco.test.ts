@@ -75,6 +75,6 @@ describe('lo que ya no está', () => {
 		// dibujan dos veces y se ven los dos.
 		const abierto = await pedirAutorizacion();
 
-		expect(abierto.findAll('.rounded-corner-window').length).toBe(1);
+		expect(abierto.findAll('.rounded-corner-window')).toHaveLength(1);
 	});
 });
