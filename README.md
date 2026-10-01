@@ -88,8 +88,8 @@ escribir la contraseña de la sesión donde no va: distinto título, distinto í
 y un test comprueba que los títulos no coincidan.
 
 Abrir un disco **interno** sí necesita además autorización de polkit, así que los
-dos diálogos pueden aparecer uno tras otro. Cuál se ve lo decide `dialogoVisible`
-(`src/tools/dialogos.ts`): mientras polkit esté preguntando, el de la frase se
+dos diálogos pueden aparecer uno tras otro. Cuál se ve lo decide `visibleDialog`
+(`src/tools/dialogs.ts`): mientras polkit esté preguntando, el de la frase se
 esconde, porque el pedido de polkit llega *adentro* del desbloqueo y lo deja
 esperando.
 
