@@ -133,12 +133,15 @@ onUnmounted(() => {
       :class="shaking ? 'animate-shake' : ''"
     >
       <!-- El contenedor es lo que deja al diálogo adaptarse al ancho que le
-           den sin preguntarle a la pantalla (WebKitGTK no avisa de `resize`):
-           por debajo de 20rem el icono de 80 se esconde y el texto se queda
-           con ese ancho, en vez de partir las palabras letra por letra. -->
-      <div class="@container flex min-w-0 flex-1">
-        <div class="flex min-w-0 flex-1 gap-4 p-5">
-          <ThemeIcon name="dialog-password" :size="80" class="hidden self-start @[20rem]:block" />
+           den sin preguntarle a la pantalla (WebKitGTK no avisa de `resize`).
+           Desde 24rem —la ventana mide 400— es lo de siempre: el icono a la
+           izquierda, el mensaje recortado y los botones a la derecha. Más
+           angosto va una columna por vez, como en un teléfono: el icono
+           arriba, el mensaje entero, los botones uno debajo del otro, y lo que
+           no entre en el alto se desplaza en vez de cortarse. -->
+      <div class="@container flex min-h-0 min-w-0 flex-1">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-5 @[24rem]:flex-row @[24rem]:overflow-visible">
+          <ThemeIcon name="dialog-password" :size="80" class="self-start" />
 
           <div class="flex flex-col gap-3 min-w-0 flex-1">
             <SectionHeading :title="t('polkit.title')" as="h2" />
@@ -148,11 +151,12 @@ onUnmounted(() => {
                  entero adentro. Antes desbordaba y aparecía una barra de
                  desplazamiento dentro de un diálogo modal, que además tapaba los
                  botones.
-                 Ahora la ventana es más alta y el texto se recorta con puntos
-                 suspensivos en la cantidad de renglones que siempre entra: recortar
-                 es preferible a una barra, y el texto completo queda en el `title`
-                 para quien lo necesite. -->
-            <p class="text-sm text-tx-main leading-snug line-clamp-6" :title="message">{{ message }}</p>
+                 En el ancho de la ventana el texto se recorta con puntos
+                 suspensivos en la cantidad de renglones que siempre entra, y el
+                 texto completo queda en el `title`. Más angosto, donde va una
+                 columna por vez, se muestra entero: ahí recortar dejaba el
+                 comando a media línea, y lo que no entra se desplaza. -->
+            <p class="text-sm text-tx-main leading-snug break-words @[24rem]:line-clamp-6" :title="message">{{ message }}</p>
 
             <form
               class="flex flex-col gap-2"
@@ -179,17 +183,17 @@ onUnmounted(() => {
               <!-- Cancelar va primero y es `type="button"`: Enter en el campo
                    envía con el primer botón de envío del formulario, y si
                    Cancelar lo fuera, Enter cancelaría. -->
-              <div class="flex flex-wrap justify-end gap-2 pt-1">
+              <div class="flex flex-col gap-2 pt-1 @[24rem]:flex-row @[24rem]:flex-wrap @[24rem]:justify-end">
                 <ActionButton
                   variant="secondary"
-                  custom-class="shrink-0"
+                  custom-class="w-full shrink-0 @[24rem]:w-auto"
                   :label="t('polkit.cancel')"
                   @click="cancel"
                 />
 
                 <ActionButton
                   type="submit"
-                  custom-class="shrink-0"
+                  custom-class="w-full shrink-0 @[24rem]:w-auto"
                   :label="loading ? t('polkit.checking') : t('polkit.accept')"
                   :loading="loading"
                   :disabled="!password"

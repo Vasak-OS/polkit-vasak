@@ -202,25 +202,36 @@ describe('las piezas son las de la librería', () => {
 		['polkit', askForAuth],
 		['el disco', () => askForPassphrase()],
 	] as const) {
-		test(`en ${name}, lo angosto se resuelve por contenedor y no por pantalla`, async () => {
-			// WebKitGTK no avisa de `resize` ni de `matchMedia`: el icono de 80 se
-			// esconde con una consulta de contenedor sobre el propio diálogo, y
-			// los botones bajan de renglón en vez de partir la etiqueta letra por
-			// letra.
+		test(`en ${name}, lo angosto va en una columna, por contenedor y no por pantalla`, async () => {
+			// WebKitGTK no avisa de `resize` ni de `matchMedia`, así que todo cuelga
+			// de una consulta de contenedor sobre el propio diálogo. Desde 24rem
+			// (la ventana mide 400) es lo de siempre; más angosto, una columna por
+			// vez: el icono arriba, el mensaje entero, los botones apilados y a
+			// todo el ancho, y lo que no entra se desplaza en vez de cortarse.
 			const opened = await open();
-			// El icono llega del tema con un pedido asíncrono: hasta que vuelve,
-			// no hay `img` que mirar.
 			for (let i = 0; i < 20 && !opened.find('img').exists(); i++) {
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			}
 			const icon = opened.find('img');
+			// El icono no se esconde en ningún ancho.
+			expect(icon.classes()).not.toContain('hidden');
 
-			expect(icon.classes()).toEqual(expect.arrayContaining(['hidden', '@[20rem]:block']));
-			expect(icon.element.closest('.\\@container')).not.toBeNull();
-			const row = opened.findComponent(ActionButton).element.parentElement;
-			expect(row?.classList.contains('flex-wrap')).toBe(true);
+			const body = icon.element.parentElement as HTMLElement;
+			expect(body.closest('.\\@container')).not.toBeNull();
+			expect([...body.classList]).toEqual(
+				expect.arrayContaining(['flex-col', 'overflow-y-auto', 'min-h-0', '@[24rem]:flex-row']),
+			);
+
+			// El mensaje sólo se recorta en el ancho de la ventana.
+			const message = opened.find('p[title]');
+			expect([...message.classes()].filter((name) => name.includes('line-clamp'))).toEqual([
+				expect.stringMatching(/^@\[24rem\]:line-clamp-\d$/),
+			]);
+
+			const row = opened.findComponent(ActionButton).element.parentElement as HTMLElement;
+			expect([...row.classList]).toEqual(expect.arrayContaining(['flex-col', '@[24rem]:flex-row']));
 			for (const button of opened.findAllComponents(ActionButton)) {
-				expect(button.classes()).toContain('shrink-0');
+				expect(button.classes()).toEqual(expect.arrayContaining(['w-full', '@[24rem]:w-auto', 'shrink-0']));
 			}
 		});
 	}

@@ -161,20 +161,23 @@ onUnmounted(() => {
       :class="shaking ? 'animate-shake' : ''"
     >
       <!-- El contenedor es lo que deja al diálogo adaptarse al ancho que le
-           den sin preguntarle a la pantalla (WebKitGTK no avisa de `resize`):
-           por debajo de 20rem el icono de 80 se esconde y el texto se queda
-           con ese ancho, en vez de partir las palabras letra por letra. -->
-      <div class="@container flex min-w-0 flex-1">
-        <div class="flex min-w-0 flex-1 gap-4 p-5">
+           den sin preguntarle a la pantalla (WebKitGTK no avisa de `resize`).
+           Desde 24rem —la ventana mide 400— es lo de siempre: el icono a la
+           izquierda, el mensaje recortado y los botones a la derecha. Más
+           angosto va una columna por vez, como en un teléfono: el icono
+           arriba, el mensaje entero, los botones uno debajo del otro, y lo que
+           no entre en el alto se desplaza en vez de cortarse. -->
+      <div class="@container flex min-h-0 min-w-0 flex-1">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-5 @[24rem]:flex-row @[24rem]:overflow-visible">
           <!-- Un disco con candado, no el escudo de polkit: la contraseña de la
                cuenta y la frase de un disco son preguntas distintas y tienen que
                verse distintas. -->
-          <ThemeIcon name="drive-harddisk-encrypted" :size="80" class="hidden self-start @[20rem]:block" />
+          <ThemeIcon name="drive-harddisk-encrypted" :size="80" class="self-start" />
 
           <div class="flex flex-col gap-3 min-w-0 flex-1">
             <SectionHeading :title="t('unlock.title')" as="h2" />
 
-            <p class="text-sm text-tx-main leading-snug line-clamp-3" :title="message">{{ message }}</p>
+            <p class="text-sm text-tx-main leading-snug break-words @[24rem]:line-clamp-3" :title="message">{{ message }}</p>
 
             <form class="flex flex-col gap-2" @submit.prevent="submit">
               <!-- La casilla va adentro del grupo, entre el campo y el error: es
@@ -197,17 +200,17 @@ onUnmounted(() => {
 
               <!-- Cancelar es `type="button"`: Enter envía con el primer botón de
                    envío, y si Cancelar lo fuera, Enter cancelaría. -->
-              <div class="flex flex-wrap justify-end gap-2 pt-1">
+              <div class="flex flex-col gap-2 pt-1 @[24rem]:flex-row @[24rem]:flex-wrap @[24rem]:justify-end">
                 <ActionButton
                   variant="secondary"
-                  custom-class="shrink-0"
+                  custom-class="w-full shrink-0 @[24rem]:w-auto"
                   :label="t('unlock.cancel')"
                   @click="cancel"
                 />
 
                 <ActionButton
                   type="submit"
-                  custom-class="shrink-0"
+                  custom-class="w-full shrink-0 @[24rem]:w-auto"
                   :label="sending ? t('unlock.unlocking') : t('unlock.accept')"
                   :loading="sending"
                   :disabled="!passphrase"
