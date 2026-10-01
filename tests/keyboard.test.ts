@@ -279,22 +279,41 @@ describe('sin nada que preguntar', () => {
 });
 
 describe('con los dos pedidos vivos', () => {
-	test('Escape cancela sólo el que se ve', async () => {
-		// Abrir un disco interno pide la frase y, adentro del desbloqueo, la
-		// autorización de polkit. Los dos escuchan el mismo `document`: el
-		// Escape sobre el de polkit no puede cancelar también el de abajo, que
-		// nadie estaba mirando.
-		await askForPassphrase();
-		const view = await askForAuth();
-		expect(passwordField().getAttribute('aria-label')).toBe('polkit.password');
+	/**
+	 * Los dos montados primero y los pedidos después, como en la ventana real:
+	 * `App.vue` monta los dos diálogos al arrancar y los pedidos llegan más
+	 * tarde. El orden de montaje es el orden de los oyentes del `document`, y
+	 * es lo que decide quién recibe el Escape primero.
+	 */
+	async function bothAsking(order: 'app' | 'reverse') {
+		const components = order === 'app' ? [PolkitModal, UnlockModal] : [UnlockModal, PolkitModal];
+		const mounted = components.map((component) => mountAttached(component));
+		await Promise.resolve();
+		await emit('unlock-request', { id: 'd1', name: 'Respaldo', wrongPassphrase: false });
+		await emit('polkit-request', { message: 'Se necesita autenticación', cookie: 'c' });
+		for (const view of mounted) await view.vm.$nextTick();
+		return mounted[0] as VueWrapper;
+	}
 
-		const event = pressEscapeIn(passwordField());
-		await view.vm.$nextTick();
+	for (const order of ['app', 'reverse'] as const) {
+		test(`Escape cancela sólo el que se ve (montados ${order === 'app' ? 'como en App.vue' : 'al revés'})`, async () => {
+			// Abrir un disco interno pide la frase y, adentro del desbloqueo, la
+			// autorización de polkit. Los dos escuchan el mismo `document`: el
+			// Escape sobre el de polkit no puede cancelar también el de abajo,
+			// que nadie estaba mirando. En el orden de `App.vue` el de polkit
+			// cancela primero y deja al otro como visible en el mismo despacho;
+			// la prueba que montaba al revés no lo veía (lo marcó CodeRabbit).
+			const view = await bothAsking(order);
+			expect(passwordField().getAttribute('aria-label')).toBe('polkit.password');
 
-		expect(event.defaultPrevented).toBe(true);
-		expect(invocations).toContain('cancel_pending');
-		expect(invocations).not.toContain('cancelar_desbloqueo');
-		// Y el de abajo vuelve a la vista, con su campo.
-		expect(passwordField().getAttribute('aria-label')).toBe('unlock.passphrase');
-	});
+			const event = pressEscapeIn(passwordField());
+			await view.vm.$nextTick();
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(invocations).toContain('cancel_pending');
+			expect(invocations).not.toContain('cancelar_desbloqueo');
+			// Y el de abajo vuelve a la vista, con su campo.
+			expect(passwordField().getAttribute('aria-label')).toBe('unlock.passphrase');
+		});
+	}
 });

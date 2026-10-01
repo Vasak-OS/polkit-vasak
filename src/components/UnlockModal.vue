@@ -93,9 +93,15 @@ function close() {
  * Mientras polkit pregunta encima, el desbloqueo sigue vivo y escuchando el
  * mismo `document`: sin mirar quién está a la vista, el Escape que cancelaba la
  * autorización cancelaba también este pedido, que nadie estaba mirando.
+ *
+ * Y `visible` no alcanza solo. Los dos oyentes corren en el mismo despacho, en
+ * el orden en que se montaron, y el de polkit va primero (`App.vue`): al
+ * cancelar pone `polkitAsking` en `false` antes de su primer `await`, así que
+ * cuando llega acá este diálogo ya figura como el visible. El
+ * `defaultPrevented` es lo que dice que la tecla ya era de otro.
  */
 function onKeydown(event: KeyboardEvent) {
-	if (event.key !== 'Escape' || !visible.value) return;
+	if (event.key !== 'Escape' || event.defaultPrevented || !visible.value) return;
 	event.preventDefault();
 	void cancel();
 }

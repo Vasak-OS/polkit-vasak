@@ -61,10 +61,13 @@ async function submit() {
  * Los dos diálogos escuchan el mismo `document`, y abrir un disco interno los
  * deja vivos a la vez: sin mirar quién está a la vista, un Escape sobre el de
  * polkit cancelaba también el desbloqueo que esperaba debajo. El
- * `preventDefault` es para que la tecla no haga además lo suyo en el campo.
+ * `preventDefault` es para que la tecla no haga además lo suyo en el campo, y
+ * es también la marca de que alguien ya la atendió: el que la recibe segundo
+ * no puede fiarse de `visible`, porque el primero ya cambió quién se ve al
+ * cancelar, en el mismo despacho del evento.
  */
 function onKeydown(e: KeyboardEvent) {
-	if (e.key !== 'Escape' || !visible.value) return;
+	if (e.key !== 'Escape' || e.defaultPrevented || !visible.value) return;
 	e.preventDefault();
 	void cancel();
 }
