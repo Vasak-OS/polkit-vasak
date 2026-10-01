@@ -12,8 +12,8 @@ import UnlockModal from '@/components/UnlockModal.vue';
 onMounted(() => {
 	// El tipo del store llega genérico desde el plugin; el mismo molde que usa
 	// la pantalla de bloqueo.
-	const configuracion = useConfigStore();
-	configuracion.loadConfig().catch(() => {
+	const config = useConfigStore();
+	config.loadConfig().catch(() => {
 		// Con los colores por omisión sigue siendo un diálogo usable; lo que no
 		// puede es no aparecer.
 	});
@@ -22,7 +22,7 @@ onMounted(() => {
 
 <template>
   <!-- Los dos comparten la ventana y nunca se ven juntos: cuál aparece lo decide
-       `dialogoVisible`. -->
+       `visibleDialog`. -->
   <PolkitModal />
   <UnlockModal />
 </template>

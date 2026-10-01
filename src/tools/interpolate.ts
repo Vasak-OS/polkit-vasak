@@ -13,13 +13,13 @@
  * después**. En un diálogo que pide una contraseña, no decir bien de qué disco se
  * trata es exactamente lo que no puede pasar.
  */
-export function interpolar(plantilla: string, ...valores: unknown[]): string {
+export function interpolate(template: string, ...values: unknown[]): string {
 	// Una sola pasada, y con función de reemplazo: así un valor que contenga el
 	// texto de otro marcador no lo reemplaza la pasada siguiente, y los `$` del
 	// valor no se interpretan.
-	return plantilla.replace(/\{(\d+)\}/g, (completo, indice: string) => {
-		const valor = valores[Number(indice)];
+	return template.replace(/\{(\d+)\}/g, (whole, index: string) => {
+		const value = values[Number(index)];
 		// Un marcador sin valor se deja como está, en lugar de decir «undefined».
-		return valor === undefined ? completo : String(valor);
+		return value === undefined ? whole : String(value);
 	});
 }

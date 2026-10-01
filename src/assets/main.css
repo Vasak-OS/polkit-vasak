@@ -1,18 +1,21 @@
-/* biome-ignore-all lint/style/noDescendingSpecificity: el `body *` de más abajo
-   fija el color del texto y el bloque de `@layer base` fija `border-color`. La
-   regla compara selectores sin mirar qué propiedad tocan, así que ve un conflicto
-   donde no hay ninguno: ninguna de las dos declaraciones puede pisar a la otra. */
 /* biome-ignore-all lint/complexity/noImportantStyles: las reglas de animación de
    los diálogos conviven en el mismo elemento con las utilidades de Tailwind, que
-   se generan con la misma especificidad y ganan por orden de aparición. Estaban
-   así desde que vivían dentro del componente; mudarlas a este archivo no cambia
-   contra qué compiten. */
+   se generan con la misma especificidad y ganan por orden de aparición; y el
+   bloque de «menos movimiento» tiene que ganarle a todo lo que anime. */
 @import "tailwindcss";
 
+/* La forma de los componentes, con el criterio de Once UI: radios derivados
+   del que eligió la persona, bordes finos, velos de estado, la superficie de lo
+   que flota, sombras, roles de texto y curvas. Va después de Tailwind, como
+   pide la librería, y trae también el piso del anillo de foco con `ui-focus`
+   (vue-libvasak#74, `docs/once-ui.md`). Los colores no están ahí: los deriva de
+   las `--use-*` de abajo, que pisa el config-manager con el esquema. */
+@import "@vasakgroup/vue-libvasak/tokens.css";
+
 /* Tailwind v4 no mira dentro de `node_modules`, así que las clases que sólo
-   existen en los componentes de la librería compartida —el marco, la barra— no
-   llegan nunca a la hoja de estilos: la ventana abre con el marcado puesto y
-   sin ninguna de sus reglas. */
+   existen en los componentes de la librería compartida —el marco, el botón, la
+   casilla— no llegan nunca a la hoja de estilos: la ventana abre con el marcado
+   puesto y sin ninguna de sus reglas. */
 @source "../../node_modules/@vasakgroup/vue-libvasak/dist";
 
 :root {
@@ -39,17 +42,28 @@
   --ui-background: #eff1f5;
   --ui-surface: #ccd0da;
   --ui-border: #dce0e8;
+  /* El borde de lo que **delimita un control**: el campo de la contraseña y la
+     casilla. `--ui-border` da 1,17:1 contra el fondo en claro, y un contorno
+     tiene que llegar a 3:1 (WCAG 1.4.11) para que se vea dónde se escribe. */
+  --ui-border-strong: #7c7f93;
   --ui-background-dark: #1e1e2e;
   --ui-surface-dark: #313244;
   --ui-border-dark: #11111b;
+  --ui-border-strong-dark: #6c7086;
 
   /* Colores de Texto */
   --text-main: #4c4f69;
-  --text-muted: #6c6f85;
-  --text-on-primary: #5c5f77;
+  /* #555869 y no #6c6f85: el anterior daba 4,37:1 sobre el fondo, debajo del
+     4,5:1 que pide un texto. */
+  --text-muted: #555869;
+  /* #1e1e2e y no #5c5f77: «Aceptar» salía gris sobre rosa, a 2,1:1, hasta que
+     cargaba la configuración, y en oscuro lavanda sobre rosa a 1,4:1. */
+  --text-on-primary: #1e1e2e;
+  --text-on-secondary: #eff1f5;
   --text-main-dark: #cdd6f4;
   --text-muted-dark: #a6adc8;
-  --text-on-primary-dark: #cdd6f4;
+  --text-on-primary-dark: #1e1e2e;
+  --text-on-secondary-dark: #1e1e2e;
 
   /* Status */
   --status-error: #d20f39;
@@ -59,59 +73,17 @@
   --status-success-dark: #a6e3a1;
   --status-warning-dark: #f9e2af;
 
-  /* Terminal Colors */
-  --terminal-foreground: #4c4f69;
-  --terminal-background: #eff1f5;
-  --terminal-cursor: #dd7878;
-  --terminal-foreground-dark: #dddddd;
-  --terminal-background-dark: #1a1a1a;
-  --terminal-cursor-dark: #d4885c;
-
-  --terminal-ansi-black: #4c4f69;
-  --terminal-ansi-red: #d20f39;
-  --terminal-ansi-green: #40a02b;
-  --terminal-ansi-yellow: #df8e1d;
-  --terminal-ansi-blue: #1e66f5;
-  --terminal-ansi-magenta: #8839ef;
-  --terminal-ansi-cyan: #04a5e5;
-  --terminal-ansi-white: #e6e9ef;
-
-  --terminal-ansi-bright-black: #4c4f69;
-  --terminal-ansi-bright-red: #d20f39;
-  --terminal-ansi-bright-green: #40a02b;
-  --terminal-ansi-bright-yellow: #df8e1d;
-  --terminal-ansi-bright-blue: #1e66f5;
-  --terminal-ansi-bright-magenta: #8839ef;
-  --terminal-ansi-bright-cyan: #04a5e5;
-  --terminal-ansi-bright-white: #e6e9ef;
-
-  --terminal-ansi-black-dark: #181825;
-  --terminal-ansi-red-dark: #f38ba8;
-  --terminal-ansi-green-dark: #a6e3a1;
-  --terminal-ansi-yellow-dark: #f9e2af;
-  --terminal-ansi-blue-dark: #89b4fa;
-  --terminal-ansi-magenta-dark: #eba0ac;
-  --terminal-ansi-cyan-dark: #89dceb;
-  --terminal-ansi-white-dark: #cdd6f4;
-
-  --terminal-ansi-bright-black-dark: #181825;
-  --terminal-ansi-bright-red-dark: #f38ba8;
-  --terminal-ansi-bright-green-dark: #a6e3a1;
-  --terminal-ansi-bright-yellow-dark: #f9e2af;
-  --terminal-ansi-bright-blue-dark: #89b4fa;
-  --terminal-ansi-bright-magenta-dark: #eba0ac;
-  --terminal-ansi-bright-cyan-dark: #89dceb;
-  --terminal-ansi-bright-white-dark: #cdd6f4;
-
   /* Logic Assignments */
   --use-primary: var(--primary);
   --use-secondary: var(--secondary);
   --use-ui-background: var(--ui-background);
   --use-ui-surface: var(--ui-surface);
   --use-ui-border: var(--ui-border);
+  --use-ui-border-strong: var(--ui-border-strong);
   --use-text-main: var(--text-main);
   --use-text-muted: var(--text-muted);
   --use-text-on-primary: var(--text-on-primary);
+  --use-text-on-secondary: var(--text-on-secondary);
   --use-status-error: var(--status-error);
   --use-status-success: var(--status-success);
   --use-status-warning: var(--status-warning);
@@ -124,9 +96,11 @@
   --use-ui-background: var(--ui-background-dark);
   --use-ui-surface: var(--ui-surface-dark);
   --use-ui-border: var(--ui-border-dark);
+  --use-ui-border-strong: var(--ui-border-strong-dark);
   --use-text-main: var(--text-main-dark);
   --use-text-muted: var(--text-muted-dark);
   --use-text-on-primary: var(--text-on-primary-dark);
+  --use-text-on-secondary: var(--text-on-secondary-dark);
   --use-status-error: var(--status-error-dark);
   --use-status-success: var(--status-success-dark);
   --use-status-warning: var(--status-warning-dark);
@@ -142,9 +116,10 @@
   --font-title: var(--vsk-font-title);
   --font-mono: var(--vsk-font-terminal);
 
-  /* radius */
-  --radius-corner: var(--corner-radius);
-  --radius-corner-window: calc(var(--corner-radius) + 2px);
+  /* Los radios —`rounded-corner-xs…xl`, `-full` y `-window`— los declara
+     `tokens.css`, derivados todos de `--corner-radius` con `calc()`. Acá había
+     una copia (`corner` y `corner-window`); dos lugares que dicen lo mismo
+     terminan diciendo cosas distintas. */
 
   /* Colores de Marca - responsive a dark mode */
   --color-primary: var(--use-primary);
@@ -154,11 +129,13 @@
   --color-ui-bg: var(--use-ui-background);
   --color-ui-surface: var(--use-ui-surface);
   --color-ui-border: var(--use-ui-border);
+  --color-ui-border-strong: var(--use-ui-border-strong);
 
   /* Colores de Texto - responsive a dark mode */
   --color-tx-main: var(--use-text-main);
   --color-tx-muted: var(--use-text-muted);
   --color-tx-on-primary: var(--use-text-on-primary);
+  --color-tx-on-secondary: var(--use-text-on-secondary);
 
   /* Status - responsive a dark mode */
   --color-status-error: var(--use-status-error);
@@ -166,20 +143,23 @@
   --color-status-warning: var(--use-status-warning);
 }
 
-::view-transition-old(root) {
-  animation-delay: 500ms;
-}
+/* El color del texto se hereda del cuerpo y va en la capa `base`.
 
-::view-transition-new(root) {
-  animation: circle-in 500ms;
-}
+   Era `body * { @apply text-tx-main }` suelto, fuera de toda capa, y en CSS lo
+   que no está en una capa le gana a lo que sí: pisaba **todas** las utilidades
+   de color de texto. Por eso el «La contraseña no es correcta» que pedía
+   `text-status-error` salía con el color del texto principal, y el texto del
+   botón primario también (vasak-desktop#144). La transición de colores al
+   cambiar de tema se queda, también en `base`, para que la de un componente la
+   pise en vez de perder contra ella. */
+@layer base {
+  body {
+    color: var(--color-tx-main);
+  }
 
-body * {
-  @apply text-tx-main transition-colors duration-300;
-}
-
-.background {
-  @apply bg-ui-bg/80;
+  body * {
+    @apply transition-colors duration-300;
+  }
 }
 
 @layer base {
@@ -188,7 +168,9 @@ body * {
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentColor);
+    /* El canto fino del esquema y no `gray-200`, que es un gris de la paleta
+       de Tailwind: un `border` sin color queda como los de la librería. */
+    border-color: var(--color-ui-line-weak, currentColor);
   }
 }
 
@@ -202,12 +184,14 @@ body * {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+  /* Con `rgba(255,255,255,.2)` la barra era blanca sobre fondo claro, o sea
+     invisible. El token sigue al tema. */
+  background: color-mix(in srgb, var(--color-tx-muted) 45%, transparent);
+  border-radius: var(--radius-corner-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: color-mix(in srgb, var(--color-tx-muted) 70%, transparent);
 }
 
 /* ── La animación de los diálogos ───────────────────────────────────────────
@@ -253,4 +237,43 @@ body * {
 }
 .animate-shake {
   animation: shake 0.4s ease-in-out !important;
+}
+
+/* ── Accesibilidad: el foco y el movimiento ────────────────────────────────── */
+
+/*
+ * El foco del teclado tiene que verse (WCAG 2.4.7). El piso del anillo lo trae
+ * `tokens.css`, en `ui-focus`: una copia acá, por venir después, le ganaría.
+ */
+
+/*
+ * Menos movimiento para quien lo pidió (WCAG 2.3.3).
+ *
+ * Acá importa más que en otro lado: el temblor de la contraseña equivocada sacude
+ * la ventana entera, y el diálogo entra escalando encima de lo que sea que se
+ * esté haciendo. No se apaga del todo: una duración mínima en lugar de `none`
+ * conserva los eventos `transitionend` y `animationend`, que `<Transition>`
+ * espera para sacar el diálogo.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Las del diálogo van nombradas: llevan `!important` y una clase, así que le
+     ganan al `*` de arriba por especificidad. Sin esto, quien pidió menos
+     movimiento seguía viendo la ventana escalar y sacudirse. */
+  .dialog-enter-active,
+  .dialog-leave-active {
+    transition-duration: 0.01ms !important;
+  }
+
+  .animate-shake {
+    animation: none !important;
+  }
 }
