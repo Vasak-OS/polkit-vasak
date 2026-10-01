@@ -23,7 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { olvidarLosIconosDelTema as forgetThemeIcons } from '@vasakgroup/vue-libvasak';
+import { forgetThemeIcons } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import PolkitModal from '@/components/PolkitModal.vue';
 import UnlockModal from '@/components/UnlockModal.vue';

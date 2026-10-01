@@ -20,7 +20,7 @@ import {
 	ActionButton,
 	Checkbox,
 	FormGroup,
-	olvidarLosIconosDelTema as forgetThemeIcons,
+	forgetThemeIcons,
 	SectionHeading,
 	TextInput,
 	WindowFrame,

@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
-import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
+import { forgetThemeIcons } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
@@ -71,14 +71,14 @@ beforeEach(() => {
 	jest.useFakeTimers();
 	// La memoria de la librería vive en su módulo y sobrevive entre archivos de
 	// prueba: sin vaciarla, esto ve el icono que dejó otra.
-	olvidarLosIconosDelTema();
+	forgetThemeIcons();
 });
 
 afterEach(() => {
 	mounted?.unmount();
 	mounted = null;
 	forgetEverything();
-	olvidarLosIconosDelTema();
+	forgetThemeIcons();
 	jest.useRealTimers();
 });
 
