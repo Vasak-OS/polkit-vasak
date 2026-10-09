@@ -12,6 +12,7 @@ import './complemento-vue';
 import {
 	getIconSource,
 	getSymbolSource,
+	I18n,
 	invoke,
 	listen,
 	readConfig,
@@ -31,7 +32,7 @@ const vicons = await import('@vasakgroup/plugin-vicons');
 
 mock.module('@tauri-apps/api/core', () => ({ ...core, invoke }));
 mock.module('@tauri-apps/api/event', () => ({ ...event, listen }));
-mock.module('@vasakgroup/tauri-plugin-i18n', () => ({ useI18n }));
+mock.module('@vasakgroup/tauri-plugin-i18n', () => ({ default: I18n, useI18n }));
 mock.module('@vasakgroup/plugin-vicons', () => ({ ...vicons, getIconSource, getSymbolSource }));
 mock.module('@vasakgroup/plugin-config-manager', () => ({
 	...configManager,

@@ -50,6 +50,17 @@ export function useI18n() {
 	return { t: (key: string) => key, locale: { value: 'es' } };
 }
 
+/**
+ * El doble del export por omisión del plugin de i18n. `main.ts` y
+ * `loadTranslations` importan `I18n` por omisión; sin este doble, el import se
+ * cae con «Missing 'default' export» aunque nadie llame a `load()`.
+ */
+export const I18n = {
+	getInstance() {
+		return { load: async () => {} };
+	},
+};
+
 /** La configuración de la ventana. El diálogo sólo la pide para los colores. */
 export function useConfigStore() {
 	return { config: {}, loadConfig: async () => {} };
