@@ -17,7 +17,7 @@ import {
 	readConfig,
 	useConfigStore,
 	useI18n,
-} from './dobles';
+} from './doubles';
 
 GlobalRegistrator.register();
 
@@ -25,16 +25,16 @@ GlobalRegistrator.register();
 // reemplazarlo entero desaparecían exportaciones que otros módulos del propio
 // Tauri importan —`SERIALIZE_TO_IPC_FN`, por ejemplo— y la suite no arrancaba.
 const core = await import('@tauri-apps/api/core');
-const evento = await import('@tauri-apps/api/event');
-const configuracion = await import('@vasakgroup/plugin-config-manager');
-const iconos = await import('@vasakgroup/plugin-vicons');
+const event = await import('@tauri-apps/api/event');
+const configManager = await import('@vasakgroup/plugin-config-manager');
+const vicons = await import('@vasakgroup/plugin-vicons');
 
 mock.module('@tauri-apps/api/core', () => ({ ...core, invoke }));
-mock.module('@tauri-apps/api/event', () => ({ ...evento, listen }));
+mock.module('@tauri-apps/api/event', () => ({ ...event, listen }));
 mock.module('@vasakgroup/tauri-plugin-i18n', () => ({ useI18n }));
-mock.module('@vasakgroup/plugin-vicons', () => ({ ...iconos, getIconSource, getSymbolSource }));
+mock.module('@vasakgroup/plugin-vicons', () => ({ ...vicons, getIconSource, getSymbolSource }));
 mock.module('@vasakgroup/plugin-config-manager', () => ({
-	...configuracion,
+	...configManager,
 	useConfigStore,
 	readConfig,
 }));

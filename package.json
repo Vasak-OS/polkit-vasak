@@ -1,7 +1,7 @@
 {
   "name": "vasak-polkit-agent",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -15,35 +15,32 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-shell": "^2.3.6",
-    "@vasakgroup/plugin-config-manager": "~2.6.1",
-    "@vasakgroup/plugin-vicons": "^2.2.1",
-    "@vasakgroup/tauri-plugin-i18n": "^2.3.0",
-    "@vasakgroup/vue-libvasak": "^1.9.0",
-    "path": "^0.12.7",
+    "@tauri-apps/api": "^2.12.2",
+    "@vasakgroup/plugin-config-manager": "^2.11.0",
+    "@vasakgroup/plugin-vicons": "^2.2.2",
+    "@vasakgroup/tauri-plugin-i18n": "^2.3.1",
+    "@vasakgroup/vue-libvasak": "^2.16.0",
     "pinia": "^3.0.4",
-    "url": "^0.11.4",
     "vue": "^3.5.43"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
-    "@happy-dom/global-registrator": "^20.14.5",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@tauri-apps/cli": "^2.11.5",
-    "@types/node": "^25.9.8",
+    "@biomejs/biome": "^2.5.15",
+    "@happy-dom/global-registrator": "^20.14.6",
+    "@tauri-apps/cli": "^2.12.1",
+    "@types/node": "^26.6.4",
     "@vitejs/plugin-vue": "^6.0.9",
     "@vue/test-utils": "^2.5.1",
-    "happy-dom": "^20.14.5",
-    "postcss": "^8.5.28",
+    "happy-dom": "^20.14.6",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.6",
-    "vue-tsc": "^3.3.11"
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.12"
   },
   "vasak": {
     "bibliotecasAtrasadas": {
-      "@vasakgroup/plugin-config-manager": "La 2.7.0 declara pinia ^4 y esta aplicación está en pinia 3: subir el rango arrastra un salto mayor ajeno. Por eso el rango es ~2.6.1 y no ^2.6.1, que alcanzaría una versión que no se puede instalar. Se saca al subir a pinia 4."
+      "pinia": "La 4 es un salto mayor de una biblioteca que usa el taller entero: el resto de las aplicaciones está en pinia 3 y subir sólo ésta parte el vocabulario compartido. Va en su propio PR, coordinado con el resto. config-manager 2.9 acepta las dos, así que ya no frena a nadie.",
+      "typescript": "La 7 es el compilador nativo y no expone la API de JavaScript que lee vue-tsc 3: `vue-tsc --noEmit` se cae con ERR_PACKAGE_PATH_NOT_EXPORTED antes de mirar un archivo. Por eso ~5.9.3 y no ^5.9.3. Se sube cuando vue-tsc publique soporte para TypeScript 7.",
+      "zbus (Rust)": "zbus 4 → 5 (y zvariant 4 → 5) es una mayor de la capa de D-Bus con la que el agente se registra ante polkitd, recibe cada pedido y le habla a udisks2: cambian la forma de las interfaces y de los proxies, y lo que hay que verificar —que polkit siga entregando los pedidos y que el ayudante setuid responda— no lo dice ninguna prueba automática. Va en su propio PR, probado en una sesión real con pkexec y con un disco cifrado. El rango \"4\" del Cargo.toml no alcanza la 5."
     }
   }
 }

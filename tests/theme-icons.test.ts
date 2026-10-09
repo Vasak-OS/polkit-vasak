@@ -12,11 +12,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
-import { olvidarLosIconosDelTema } from '@vasakgroup/vue-libvasak';
+import { forgetThemeIcons } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
-import { emitir, olvidarTodo, ponerEnElTema } from './dobles';
+import { emit, forgetEverything, putInTheme } from './doubles';
 
 /**
  * Deja que terminen las promesas encadenadas del pedido del icono.
@@ -58,7 +58,7 @@ async function askForAuth() {
 	// `onMounted` se suscribe con un `await` adentro, así que el oyente no está
 	// puesto todavía cuando `mount` vuelve.
 	await Promise.resolve();
-	await emitir('polkit-request', { message: 'Se necesita autenticación', cookie: 'c' });
+	await emit('polkit-request', { message: 'Se necesita autenticación', cookie: 'c' });
 	await settle();
 	return mounted;
 }
@@ -71,20 +71,20 @@ beforeEach(() => {
 	jest.useFakeTimers();
 	// La memoria de la librería vive en su módulo y sobrevive entre archivos de
 	// prueba: sin vaciarla, esto ve el icono que dejó otra.
-	olvidarLosIconosDelTema();
+	forgetThemeIcons();
 });
 
 afterEach(() => {
 	mounted?.unmount();
 	mounted = null;
-	olvidarTodo();
-	olvidarLosIconosDelTema();
+	forgetEverything();
+	forgetThemeIcons();
 	jest.useRealTimers();
 });
 
 describe('el diálogo de autenticación dibuja su icono con el tema', () => {
 	test('lo pide por nombre', async () => {
-		ponerEnElTema('dialog-password', 'data:image/svg+xml,llave-clara');
+		putInTheme('dialog-password', 'data:image/svg+xml,llave-clara');
 
 		const vista = await askForAuth();
 
@@ -94,12 +94,12 @@ describe('el diálogo de autenticación dibuja su icono con el tema', () => {
 	test('la recarga se agenda, no pasa en el acto', async () => {
 		// Es lo que separa la 1.0.0 —la que se venía empaquetando— de la 1.4.0:
 		// sin planificador el dibujo nuevo ya estaría acá.
-		ponerEnElTema('dialog-password', 'data:image/svg+xml,llave-clara');
+		putInTheme('dialog-password', 'data:image/svg+xml,llave-clara');
 
 		const vista = await askForAuth();
 
-		ponerEnElTema('dialog-password', 'data:image/svg+xml,llave-oscura');
-		await emitir('vicons:theme-changed', null);
+		putInTheme('dialog-password', 'data:image/svg+xml,llave-oscura');
+		await emit('vicons:theme-changed', null);
 		await settle();
 
 		expect(iconSources(vista)).not.toContain('data:image/svg+xml,llave-oscura');

@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { dialogoVisible } from '@/tools/dialogos';
+import { visibleDialog } from '@/tools/dialogs';
 
-describe('dialogoVisible', () => {
+describe('visibleDialog', () => {
 	test('sin nadie pidiendo nada, la ventana no muestra ningún diálogo', () => {
-		expect(dialogoVisible(false, false)).toBe('ninguno');
+		expect(visibleDialog(false, false)).toBe('none');
 	});
 
 	test('cada pedido muestra el suyo', () => {
-		expect(dialogoVisible(true, false)).toBe('polkit');
-		expect(dialogoVisible(false, true)).toBe('desbloqueo');
+		expect(visibleDialog(true, false)).toBe('polkit');
+		expect(visibleDialog(false, true)).toBe('unlock');
 	});
 
 	test('con los dos vivos gana polkit', () => {
@@ -17,6 +17,6 @@ describe('dialogoVisible', () => {
 		// desbloqueo sigue esperando. Mostrar el de abajo sería pedir una frase
 		// que no va a ir a ningún lado, y la respuesta se la llevaría el diálogo
 		// equivocado.
-		expect(dialogoVisible(true, true)).toBe('polkit');
+		expect(visibleDialog(true, true)).toBe('polkit');
 	});
 });

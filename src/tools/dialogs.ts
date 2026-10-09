@@ -6,7 +6,7 @@
  * cifrado. No son alternativas —abrir un disco interno necesita las dos, una
  * después de la otra— así que puede haber dos pedidos vivos al mismo tiempo.
  */
-export type DialogoActivo = 'ninguno' | 'polkit' | 'desbloqueo';
+export type ActiveDialog = 'none' | 'polkit' | 'unlock';
 
 /**
  * Cuando los dos están pidiendo algo, se ve el de polkit.
@@ -17,17 +17,14 @@ export type DialogoActivo = 'ninguno' | 'polkit' | 'desbloqueo';
  * ningún lado hasta que se conteste la de arriba, y encima la respuesta se la
  * llevaría el diálogo equivocado.
  */
-export function dialogoVisible(
-	polkitPidiendo: boolean,
-	desbloqueoPidiendo: boolean
-): DialogoActivo {
-	if (polkitPidiendo) {
+export function visibleDialog(polkitAsking: boolean, unlockAsking: boolean): ActiveDialog {
+	if (polkitAsking) {
 		return 'polkit';
 	}
 
-	if (desbloqueoPidiendo) {
-		return 'desbloqueo';
+	if (unlockAsking) {
+		return 'unlock';
 	}
 
-	return 'ninguno';
+	return 'none';
 }
