@@ -1,33 +1,17 @@
-import I18n from '@vasakgroup/tauri-plugin-i18n';
 import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from '@/App.vue';
 import '@/assets/main.css';
-
-/**
- * Cuánto se espera a las traducciones antes de montar.
- *
- * Se espera para que el diálogo no muestre las claves crudas, pero con plazo: si
- * el backend no contesta, es mejor un diálogo con las claves a la vista que una
- * ventana en blanco pidiendo una contraseña.
- */
-const PLAZO_TRADUCCIONES_MS = 1500;
+import { loadTranslations } from '@/tools/translations';
 
 const app = createApp(App);
 const pinia = createPinia();
 
 app.use(pinia);
 
-// Antes de montar: este diálogo aparece de golpe encima de lo que sea que estés
-// haciendo y se responde en dos segundos, así que mostrar `polkit.title` y
-// después corregirlo se ve peor que la espera.
-await Promise.race([
-	I18n.getInstance()
-		.load()
-		.catch((error) => {
-			console.error('No se pudieron cargar las traducciones', error);
-		}),
-	new Promise((resolve) => setTimeout(resolve, PLAZO_TRADUCCIONES_MS)),
-]);
+// Las traducciones se cargan con reintentos y plazo acotado antes de montar: ver
+// `loadTranslations`. Si el backend se cuelga, la ventana se monta igual con las
+// claves a la vista en vez de quedar en blanco pidiendo una contraseña.
+await loadTranslations();
 
 app.mount('#app');
