@@ -40,3 +40,25 @@ jobs:
       # verde. Ahora que la comprobación existe (Vasak-OS/.github#7), se
       # enciende acá.
       candado_corta: true
+      # Las pruebas de Rust corren en `revisar` y de esa misma corrida sale la
+      # cobertura que se le pasa a Sonar. Sin esto las pruebas no corrían en
+      # ningún PR, y un PR que sólo toca Rust pasaba la puerta sin medir nada
+      # (Vasak-OS/.github#25).
+      pruebas_rust: -p vasak-polkit-agent
+      # Lo que pide el grafo en Linux, mirado con `cargo tree -i`:
+      #
+      #   libwebkit2gtk-4.1-dev  webkit2gtk, gtk3 (que trae wayland-client),
+      #                          soup3 y `dbus-1`, que pide `libdbus-sys` por
+      #                          `tao`
+      #   libpam0g-dev           `pam-sys`
+      #   libclang-dev           `clang-sys`: `pam-sys` genera sus enlaces con
+      #                          bindgen
+      #   lld                    `src-tauri/.cargo/config.toml` enlaza con
+      #                          `-fuse-ld=lld`, y la imagen del runner no lo trae
+      #   build-essential        el compilador de C de los `-sys`
+      paquetes_rust: >-
+        libwebkit2gtk-4.1-dev
+        libpam0g-dev
+        libclang-dev
+        lld
+        build-essential
