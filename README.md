@@ -1,193 +1,370 @@
-# vasak-polkit-agent
+# Polkit vasak
 
-Agente de autenticación de PolicyKit para VasakOS.
+`vasak-polkit-agent` es un agente de PolicyKit que se registra en el bus D-Bus del sistema para manejar solicitudes de autenticación de aplicaciones como `pkexec`.
 
-## ¿Qué es?
+---
 
-`vasak-polkit-agent` es un agente de PolicyKit que se registra en el bus
-D-Bus del sistema para manejar solicitudes de autenticación de aplicaciones
-como `pkexec`. Muestra una ventana minimalista para que el usuario ingrese
-su contraseña y completa el flujo de autenticación.
+## Tecnología
 
-## Arquitectura
+[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange?style=flat&logo=rust)](https://www.rust-lang.org/) [![Tauri](https://img.shields.io/badge/Tauri-2.0-24283b?style=flat&logo=tauri)](https://tauri.app/) [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat&logo=vue.js)](https://vuejs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+
+## Estado
+
+[![CI](https://github.com/Vasak-OS/polkit-vasak/actions/workflows/ci.yml/badge.svg)](https://github.com/Vasak-OS/polkit-vasak/actions/workflows/ci.yml)
+[![Versión](https://img.shields.io/github/v/release/Vasak-OS/polkit-vasak?style=flat&label=Versi%C3%B3n)](https://github.com/Vasak-OS/polkit-vasak/releases)
+[![Licencia](https://img.shields.io/github/license/Vasak-OS/polkit-vasak?style=flat)](LICENSE)
+[![Cobertura](https://sonarcloud.io/api/project_badges/measure?project=Vasak-OS_polkit-vasak&metric=coverage&style=flat)](https://sonarcloud.io/summary/new_code?id=Vasak-OS_polkit-vasak)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=Vasak-OS_polkit-vasak&metric=alert_status&style=flat)](https://sonarcloud.io/summary/new_code?id=Vasak-OS_polkit-vasak)
+[![Tamaño repo](https://img.shields.io/github/repo-size/Vasak-OS/polkit-vasak?style=flat)](https://github.com/Vasak-OS/polkit-vasak)
+
+---
+
+## Descripción
+
+`vasak-polkit-agent` es un agente de PolicyKit que se registra en el bus D-Bus del sistema para manejar solicitudes de autenticación de aplicaciones como `pkexec`.
+
+**Para el usuario:** 
+
+**Integración VasakOS:** Integra con el ecosistema VasakOS vía D-Bus y configuración compartida.
+
+---
+
+## Arquitectura (diagramas)
+
+> Copia y pega la plantilla que necesites, descomenta y adapta.
+
+### Flujo de datos
 
 ```mermaid
-sequenceDiagram
-    participant pkexec
-    participant polkitd
-    participant D-Bus
-    participant Agent as agente (zbus)
-    participant Tauri
-    participant Vue as diálogo Vue
-    participant Helper as polkit-agent-helper-dbus (setuid root)
-    participant PAM
+<!--
+graph TD
+    A[Entrada: Teclado / Ratón / D-Bus / Sistema] --> B[Procesamiento: Core Rust + Tauri Commands]
+    B --> C[Salida: UI actualizada / Acciones del sistema]
+    style A fill:#e1f5fe
+    style C fill:#e8f5e9
+-->
+```
 
-    pkexec->>polkitd: solicita autenticación
-    polkitd->>D-Bus: BeginAuthentication
-    D-Bus->>Agent: BeginAuthentication(action, cookie, identities)
-    Agent->>Tauri: emit polkit-request
-    Tauri->>Vue: muestra diálogo
-    Vue-->>Tauri: contraseña
-    Tauri->>Agent: submit_password
-    Agent->>Helper: spawn (uid/pid en argv; cookie+password por stdin)
-    Helper->>PAM: authenticate(polkit-1) como el usuario de la identidad
-    PAM-->>Helper: ok/error
-    alt PAM ok
-        Helper->>polkitd: AuthenticationAgentResponse3(cookie, identity, subject)
-        polkitd-->>Helper: MethodReturn
-        Helper-->>Agent: exit 0 (SUCCESS)
-        Agent-->>polkitd: MethodReturn (session path)
-        polkitd-->>pkexec: autorizado
-    else PAM error / helper exit != 0
-        Agent-->>Vue: polkit-result (error)
-        Agent-->>polkitd: MethodReturn (fallo)
-        polkitd-->>pkexec: denegado
+### Componentes internos
+
+```mermaid
+<!--
+flowchart LR
+    subgraph App[Polkit vasak]
+        UI[Frontend Vue 3 + vue-libvasak]
+        Core[Core Rust: lógica principal]
+        IPC[Tauri Commands / Eventos]
+        System[Systemd / D-Bus / PipeWire / Wayland]
     end
+    UI --> IPC
+    IPC --> Core
+    Core --> DBus[(D-Bus / zbus)]
+    Core --> System
+    style UI fill:#f3e5f5
+    style Core fill:#e3f2fd
+    style DBus fill:#fff3e0
+    style System fill:#fce4ec
+-->
 ```
 
-### Componentes
+### Integración en el sistema VasakOS
 
-- **`vasak-polkit-agent`** — Binario principal (Tauri + zbus), corre **sin privilegios**.
-  - Se registra como agente PolicyKit en la sesión del usuario.
-  - Recibe `BeginAuthentication` vía D-Bus, muestra un diálogo de contraseña.
-  - **No autentica él mismo**: entrega cookie y contraseña (por stdin) al helper
-    setuid, que es el componente de confianza.
-  - Bloquea `BeginAuthentication` hasta que el helper completa la llamada
-    D-Bus (requisito de polkitd ≥ 127).
-
-- **`polkit-agent-helper-dbus`** — Helper **setuid root** (componente de confianza).
-  - polkitd solo acepta `AuthenticationAgentResponse3` desde uid 0, por eso es
-    setuid (igual que el `polkit-agent-helper-1` estándar).
-  - Lee cookie y contraseña **por stdin** (nunca argv, para no filtrarlas por `ps`).
-  - **Autentica vía PAM (`polkit-1`) la identidad exacta que polkit pidió**
-    (resuelta desde el uid), y solo entonces responde.
-  - Abre un pidfd del proceso solicitante (`pidfd_open`) y lee `start-time` de
-    `/proc/PID/stat`; envía el subject `unix-process` (pid + pidfd + start-time).
-
-## Discos cifrados
-
-La otra cosa que este proceso pregunta, y que con polkit no tiene nada que ver:
-la frase de paso de un volumen LUKS.
-
-### Por qué acá
-
-Es la única aplicación de VasakOS cuyo trabajo ya es pedir una contraseña. Un
-diálogo de contraseña dentro de cada aplicación multiplica los lugares donde se
-escribe una, y cuantos más son, menos vale cada uno como señal: si la contraseña
-se escribe en cualquier ventana, ninguna ventana es sospechosa.
-
-El otro motivo es más concreto: así la frase no pasa por el gestor de archivos.
-La escribe este proceso y la usa este proceso contra `udisks2`; el que llamó
-recibe el punto de montaje y nada más.
-
-### El diálogo es otro
-
-Comparten la ventana y el proceso, no la pregunta. La frase de un disco no es la
-contraseña de la cuenta, y presentarlas con el mismo texto es lo que enseña a
-escribir la contraseña de la sesión donde no va: distinto título, distinto ícono,
-y un test comprueba que los títulos no coincidan.
-
-Abrir un disco **interno** sí necesita además autorización de polkit, así que los
-dos diálogos pueden aparecer uno tras otro. Cuál se ve lo decide `visibleDialog`
-(`src/tools/dialogs.ts`): mientras polkit esté preguntando, el de la frase se
-esconde, porque el pedido de polkit llega *adentro* del desbloqueo y lo deja
-esperando.
-
-### La interfaz
-
-| | |
-|---|---|
-| Bus | de sesión |
-| Nombre | `ar.net.vasak.os.DeviceUnlock` |
-| Objeto | `/ar/net/vasak/os/DeviceUnlock` |
-| Método | `UnlockAndMount(s dispositivo) → s punto_de_montaje` |
-
-```bash
-gdbus call --session \
-  --dest ar.net.vasak.os.DeviceUnlock \
-  --object-path /ar/net/vasak/os/DeviceUnlock \
-  --method ar.net.vasak.os.DeviceUnlock.UnlockAndMount /dev/sda3
+```mermaid
+<!--
+C4Context
+    title Polkit vasak en VasakOS
+    Person(usuario, "Usuario", "Persona que usa el sistema")
+    System_Boundary(c1, "VasakOS") {
+        System(app, "Polkit vasak", "`vasak-polkit-agent` es un agente de PolicyKit que se registra en el bus D-Bus d")
+        System_Ext(settings, "vasak-settings", "Configuración central")
+        System_Ext(keyring, "vasak-keyring", "Secrets y claves")
+        System_Ext(accounts, "vasak-accounts", "Cuentas e identidad")
+        System_Ext(permissions, "vasak-permissions", "Permisos y portales")
+    }
+    System_Ext(systemd, "systemd", "Gestión de servicios")
+    System_Ext(dbus, "D-Bus", "Bus de mensajes del sistema")
+    System_Ext(wayland, "Wayland / Wayfire", "Compositor")
+    System_Ext(pipewire, "PipeWire", "Multimedia")
+    Rel(usuario, app, "Usa")
+    Rel(app, settings, "Lee/escribe config")
+    Rel(app, keyring, "Guarda/lee secrets")
+    Rel(app, accounts, "Identidad de cuenta")
+    Rel(app, permissions, "Solicita permisos")
+    Rel(app, systemd, "Activación / sockets")
+    Rel(app, dbus, "Expone / consume interfaces")
+    Rel(app, wayland, "Superficies / protocolos")
+    Rel(app, pipewire, "Streams de audio/video")
+-->
 ```
 
-Que el volumen no esté cifrado no es un error: se monta igual. La alternativa
-—contestar «esto no es un disco cifrado»— convierte en una trampa a un método que
-se usa justamente cuando no se sabe.
-
-Los errores tienen nombre propio para que quien llama pueda decidir qué mostrar
-sin leer los mensajes en inglés de `udisks2`:
-
-| Error | Qué pasó |
-|---|---|
-| `…DeviceUnlock.Cancelado` | Se cerró el diálogo. No hay nada que avisar. |
-| `…DeviceUnlock.NoAutorizado` | polkit negó la autorización. |
-| `…DeviceUnlock.FraseIncorrecta` | Se acabaron los tres intentos. |
-| `…DeviceUnlock.Fallo` | Cualquier otra cosa, con el detalle de `udisks2`. |
-
-### Recordar la frase
-
-La casilla la guarda en `vasak-keyring`, por el Secret Service, indexada por el
-UUID del volumen —no por `/dev/sdX`, que cambia entre enchufadas—. Un disco que
-se usa todos los días pide la frase todos los días, y a eso se le encuentra la
-vuelta de la peor manera: eligiendo una frase corta.
-
-Todo lo del llavero falla en silencio. Si está cerrado, se pide la frase como si
-nunca se hubiera guardado; y si guardarla no se puede, el disco queda montado
-igual y lo único que se pierde es el recuerdo. Una frase guardada que deja de
-abrir el disco —alguien la cambió con `cryptsetup`— se borra sola, para no gastar
-un intento fallido en cada enchufada.
-
-### Lo que esto no decide
-
-Quién puede pedir un desbloqueo. El bus de sesión no distingue aplicaciones, así
-que cualquier programa de la sesión puede llamar al método. No es una capacidad
-nueva —`udisks2` ya está en el bus y polkit es quien autoriza—, pero con una
-frase guardada el desbloqueo pasa a ser silencioso. Por eso el diálogo **siempre
-nombra el disco**: es lo único que le permite a la persona reconocer un pedido
-que no hizo. Si alguna vez hace falta más, el camino es comprobar el ejecutable
-del llamante por `pidfd`, como hace `vasak-permissions`.
-
-## Requisitos
-
-- Rust 1.85+
-- Node.js 20+ / Bun
-- Tauri CLI 2.x
-- D-Bus
-- Polkit ≥ 127
-- `udisks2`, para abrir y montar discos cifrados
-- `vasak-keyring` (opcional), para recordar la frase de paso
-
-## Compilar
-
-```bash
-bun install
-cargo tauri build
-```
-
-Los binarios se generan en `src-tauri/target/release/`:
-- `vasak-polkit-agent`
-- `polkit-agent-helper-dbus`
+---
 
 ## Instalación
 
+### Arch Linux (repo oficial)
+
 ```bash
-sudo install -m 755 src-tauri/target/release/vasak-polkit-agent /usr/bin/
-sudo install -m 755 src-tauri/target/release/polkit-agent-helper-dbus /usr/bin/
+pacman -S vasak-polkit-vasak
 ```
 
-Configuración D-Bus necesaria en
-`/usr/share/dbus-1/system.d/org.freedesktop.PolicyKit1.conf`:
+### Debian / Ubuntu (.deb)
 
-```xml
-<policy user="polkitd">
-  <allow send_interface="org.freedesktop.PolicyKit1.AuthenticationAgent"/>
-</policy>
+```bash
+wget https://github.com/Vasak-OS/polkit-vasak/releases/download/v{{VERSION}}/vasak-polkit-vasak_{{VERSION}}_amd64.deb
+sudo apt install ./vasak-polkit-vasak_{{VERSION}}_amd64.deb
 ```
+
+### Desde fuente
+
+```bash
+git clone https://github.com/Vasak-OS/polkit-vasak.git
+cd polkit-vasak
+
+# Desarrollo (recarga en caliente frontend + backend)
+bun run dev
+
+# Build producción
+bun run build
+
+# Solo frontend
+bun run build:frontend
+
+# Solo backend Rust
+cargo build --release --locked
+```
+
+### Flatpak / AppImage
+
+> *Placeholder: añadir cuando exista paquete Flatpak o AppImage oficial.*
+
+---
+
+## Uso rápido
+
+```bash
+# Se lanza automáticamente (systemd --user) o manualmente:
+polkit-vasak
+```
+
+### Atajos / flags principales
+
+| Acción | Comando / Tecla |
+|--------|-----------------|
+| Acción principal | `polkit-vasak` |
+| Configuración | `polkit-vasak --config` |
+| Ayuda | `polkit-vasak --help` |
+
+> **Captura:** `assets/demo.gif` *(placeholder — sustituir por GIF real)*
+
+---
+
+## Configuración
+
+### Archivo de configuración
+
+```
+~/.config/vasak/polkit-vasak.toml
+```
+
+### Variables de entorno
+
+| Variable | Descripción | Por defecto |
+|----------|-------------|-------------|
+| `VASAK_DEBUG` | Activa logs de depuración en consola | `false` |
+| `VASAK_PROFILE` | Perfil de rendimiento: `balanced`, `performance`, `power-save` | `balanced` |
+
+### Integración con `tauri-plugin-config-manager`
+
+- Esquemas de color: respeta `--ui-primary`, `--ui-surface`, `--ui-focus`, `--ui-on-surface`, `--ui-border`
+- Tema de iconos: usa el tema del sistema (`vasakos-icon-theme`) vía `vicon` lookup
+- Radio de bordes: variable CSS `--ui-radius` del esquema activo (por defecto 12px)
+- Fuentes: `--ui-font-family`, `--ui-font-size-base` desde el esquema
+
+---
 
 ## Desarrollo
 
+### Requisitos
+
+- **Rust:** `rustup` toolchain estable (`rust-toolchain.toml` fija la versión)
+- **Node / bun:** `bun` ≥ 1.1 (nunca npm/yarn/pnpm para apps Tauri)
+- **Sistema:** `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libssl-dev`
+- *`libgtk-layer-shell-dev`, `wayland-protocols`, `wayfire-dev` para Wayland*
+
+### Dependencias de desarrollo
+
+#### Sistema (paquetes Arch / Debian / Fedora)
+
+`base-devel`, `pkgconf`, `libssl-dev`, `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `libpipewire-0.3-dev`, `libwireplumber-0.5-dev`, `libdbus-1-dev`, `libudev-dev`, `libxkbcommon-dev`, `libwayland-dev`, `meson`, `ninja`, `clang`, `lld`
+
+#### Rust
+
+`rustup` → `stable` + `rustfmt` + `clippy`
+
+#### Node
+
+**Solo `bun`** (nunca npm/yarn/pnpm para apps Tauri). `bun --version` ≥ 1.1
+
+#### Herramientas CLI
+
+`just` (command runner), `cargo-binstall` (opcional), `cargo-llvm-cov` (para cobertura)
+
+### Correr la app en desarrollo
+
 ```bash
+# Frontend (Vite dev server + Tauri dev)
 bun run tauri dev
+
+# Solo frontend (Vite)
+bun run dev
+
+# Solo backend (cargo watch)
+cargo watch -x "run --bin polkit-vasak"
 ```
 
-Esto inicia el agente y el frontend con hot-reload. Ejecutar `pkexec id`
-en otra terminal para probar.
+### Compilar / Build de release
+
+```bash
+# Build completo (frontend + backend + bundle)
+bun run tauri build
+
+# Solo frontend (para testear bundle después)
+bun run build
+
+# Solo backend Rust (binario optimizado)
+cargo build --release --locked
+
+# Paquetes nativos
+# Arch: makepkg -sf en PKGBUILDS/polkit-vasak/
+# Debian: cargo deb --no-build --target-dir src-tauri/target/release/debian
+```
+
+### Targets principales
+
+```bash
+# Desarrollo (Tauri dev server + hot reload)
+bun run dev
+
+# Build producción
+bun run build
+
+# Solo frontend
+bun run build:frontend
+
+# Solo backend Rust
+cargo build --release --locked
+
+# Lint + tipos (pre-commit / CI)
+bunx --bun biome check .
+bunx vue-tsc --noEmit
+cargo fmt --check
+```
+
+### Pruebas
+
+```bash
+# Suite completa JS (Vitest via bun:test)
+bun test
+
+# Suite completa Rust (crates en pruebas_rust del CI)
+cargo test -p polkit-vasak-core -p polkit-vasak-ui --locked
+
+# Integración (requiere Wayfire corriendo)
+cargo test -p polkit-vasak-integration --locked -- --ignored
+```
+
+### Convención de commits
+
+[Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/):
+
+```
+<tipo>(<ámbito>): <descripción corta>
+
+[cuerpo opcional]
+
+[pie opcional: Closes #N]
+```
+
+Tipos habituales: `feat`, `fix`, `bugfix`, `docs`, `ci`, `chore`, `security`, `refactor`, `perf`, `test`.
+
+### Cómo abrir PR
+
+1. Rama desde `origin/main`:
+   ```bash
+   git worktree add -b feat/tema ~/wt/polkit-vasak-tema origin/main
+   ```
+2. Prefijos de rama: `fix/`, `feat/`, `bugfix/`, `docs/`, `ci/`, `chore/`, `security/`
+3. Escribe el fix → **`qa` escribe las pruebas** (fallan sin el fix) → suite verde → abre PR
+4. Al abrir PR, **cuatro cosas obligatorias**:
+   - Asignado a `JoaquinDecima`
+   - Etiqueta `enhancement` o `bug` (+ `ci` / `dependencies` si aplica)
+   - Añadido al proyecto «VasakOS Roadmap»
+   - Status **In Progress**
+
+---
+
+## Arquitectura (texto)
+
+### Crates / módulos principales
+
+| `polkit-vasak-core` | Lógica compartida: estado, D-Bus, IPC |
+| `polkit-vasak-ui` | Frontend Vue 3 + componentes vue-libvasak |
+| `polkit-vasak-tauri` | Puente Tauri: commands, eventos, WebView |
+
+### Interfaces D-Bus / zbus expuestas
+
+| `org.vasak.Polkit-vasak` | `GetState()`, `StateChanged(dict)`, `SetConfig(dict)` | Estado y control principal |
+| `org.vasak.Polkit-vasak.Panel` | `SetPosition(string)`, `SetAutohide(bool)`, `Height(u32)` | Configuración panel en runtime |
+
+### Puntos de extensión
+
+- **Plugins:** Sistema de plugins modular
+- **Hooks:** Hooks de ciclo de vida
+- **API pública Rust:** API pública del crate principal
+
+### Features / Cargo features
+
+| Feature | Descripción | Default |
+|---------|-------------|---------|
+| `system-tray` | Bandeja del sistema + menú contextual | ✓ |
+| `notifications` | Integración libnotify / freedesktop | ✓ |
+| `updater` | Auto-actualización (tauri-plugin-updater) | |
+| `devtools` | DevTools en release (solo debug) | |
+| `experimental-wayland` | Protocolo Wayland inestable | |
+
+Y para apps Tauri+Vue: features del `tauri.conf.json` → `bundle` / `plugins` / `allowlist` (capabilities).
+
+---
+
+## Pruebas y calidad
+
+- **Cobertura objetivo:** ≥ 80 % del código nuevo (SonarCloud Quality Gate)
+- **Informes:** GitHub Actions → pestaña *SonarCloud Code Analysis* → enlace a SonarCloud
+- **Añadir pruebas:** ver `AGENTS.md` sección 9 (mapa de repos y comandos de prueba)
+- **Regla:** toda corrección lleva prueba escrita por `qa` que falla sin el fix
+
+---
+
+## Contribuir
+
+- **Guía:** [.github/CONTRIBUTING.md](https://github.com/Vasak-OS/.github/blob/main/CONTRIBUTING.md)
+- **Plantillas de issue:** [.github/ISSUE_TEMPLATE/](https://github.com/Vasak-OS/.github/tree/main/ISSUE_TEMPLATE)
+- **Código de conducta:** [CODE_OF_CONDUCT.md](https://github.com/Vasak-OS/.github/blob/main/CODE_OF_CONDUCT.md)
+
+---
+
+## Donadores / Sponsors
+
+[![Sponsors](https://img.shields.io/github/sponsors/Vasak-OS?style=flat&label=Sponsors)](https://github.com/sponsors/Vasak-OS)
+
+> **Backers:** *Actualizado automáticamente en CI desde GitHub Sponsors / OpenCollective / Polar.*
+
+[💖 Donar al proyecto](https://github.com/sponsors/Vasak-OS)
+
+---
+
+## Licencia
+
+`GPL-3.0` — Copyright © 2026 **Vasak-OS Contributors**
+
+[Ver licencia completa](LICENSE)
