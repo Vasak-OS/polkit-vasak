@@ -36,7 +36,7 @@ impl PolkitAgent {
         cookie: &str,
         identities: Vec<(String, HashMap<String, OwnedValue>)>,
     ) -> OwnedObjectPath {
-        eprintln!("[vasak-polkit] begin_authentication action_id={action_id} cookie={cookie}");
+        eprintln!("[vasak-polkit] begin_authentication action_id={action_id}");
 
         let cookie_owned = cookie.to_string();
         let message_owned = message.to_string();
@@ -282,6 +282,45 @@ async fn call_authentication_helper(
     }
 }
 
+/// La sesión gráfica del usuario según logind (`User.Display`), la misma que
+/// polkit le atribuye a un proceso que no está en ninguna.
+async fn display_session(conn: &zbus::Connection) -> Option<String> {
+    let reply = conn
+        .call_method(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1/user/self",
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &("org.freedesktop.login1.User", "Display"),
+        )
+        .await
+        .ok()?;
+    let value: zbus::zvariant::OwnedValue = reply.body().deserialize().ok()?;
+    session_id_of(&value)
+}
+
+/// El id de un `(so)` de logind; vacío es «sin sesión gráfica».
+fn session_id_of(value: &Value<'_>) -> Option<String> {
+    let value = match value {
+        Value::Value(inner) => inner.as_ref(),
+        other => other,
+    };
+    let Value::Structure(fields) = value else {
+        return None;
+    };
+    match fields.fields().first() {
+        Some(Value::Str(id)) if !id.is_empty() => Some(id.to_string()),
+        _ => None,
+    }
+}
+
+/// Las sesiones a probar, en orden y sin repetir; nunca ids inventados.
+fn session_candidates(env: Option<String>, display: Option<String>) -> Vec<String> {
+    let mut ids: Vec<String> = env.into_iter().chain(display).collect();
+    ids.dedup();
+    ids
+}
+
 async fn register_polkit_agent(
     app_handle: AppHandle,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
@@ -308,15 +347,19 @@ async fn register_polkit_agent(
         conn.unique_name().map(|n| n.as_str()).unwrap_or("?")
     );
 
-    let known_sessions = [
+    // Corriendo como servicio de usuario no hay `XDG_SESSION_ID` ni el proceso
+    // está en ninguna sesión, y polkit sólo acepta la sesión en la que dice que
+    // está quien llama: para un servicio, la gráfica del usuario. Antes se
+    // probaban ids inventados (2, 3, 1), y si ninguno era el de esta sesión el
+    // agente no se registraba: nadie pedía contraseña y montar un disco interno
+    // fallaba con «no autorizado».
+    let known_sessions = session_candidates(
         std::env::var("XDG_SESSION_ID").ok(),
-        Some("2".to_string()),
-        Some("3".to_string()),
-        Some("1".to_string()),
-    ];
+        display_session(&conn).await,
+    );
 
     let mut registered = false;
-    for sid in known_sessions.into_iter().flatten() {
+    for sid in known_sessions {
         let subject: (&str, HashMap<String, Value<'_>>) = (
             "unix-session",
             HashMap::from([("session-id".to_string(), Value::Str(sid.clone().into()))]),
@@ -338,12 +381,12 @@ async fn register_polkit_agent(
 
         match result {
             Ok(_) => {
-                eprintln!("[vasak-polkit] Registered successfully with session {sid}");
+                eprintln!("[vasak-polkit] Registered successfully");
                 registered = true;
                 break;
             }
             Err(e) => {
-                eprintln!("[vasak-polkit] Session {sid} failed: {e}");
+                eprintln!("[vasak-polkit] A session candidate failed: {e}");
             }
         }
     }
@@ -407,4 +450,117 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod pruebas_de_sesion {
+    use super::*;
+    use zvariant::{ObjectPath, StructureBuilder};
+
+    fn display(id: &str) -> Value<'static> {
+        Value::Structure(
+            StructureBuilder::new()
+                .add_field(id.to_string())
+                .add_field(ObjectPath::try_from("/org/freedesktop/login1/session/_34").unwrap())
+                .build(),
+        )
+    }
+
+    #[test]
+    fn el_id_sale_de_la_estructura_de_logind() {
+        assert_eq!(session_id_of(&display("4")), Some("4".to_string()));
+    }
+
+    #[test]
+    fn el_id_sale_aunque_la_estructura_venga_envuelta() {
+        let envuelto = Value::Value(Box::new(display("4")));
+        assert_eq!(session_id_of(&envuelto), Some("4".to_string()));
+    }
+
+    #[test]
+    fn un_id_vacio_es_sin_sesion_grafica() {
+        assert_eq!(session_id_of(&display("")), None);
+    }
+
+    #[test]
+    fn lo_que_no_es_una_estructura_no_da_sesion() {
+        assert_eq!(session_id_of(&Value::Str("4".into())), None);
+    }
+
+    #[test]
+    fn los_candidatos_son_el_entorno_y_la_grafica_sin_ids_inventados() {
+        assert_eq!(
+            session_candidates(None, Some("4".into())),
+            vec!["4".to_string()]
+        );
+        assert_eq!(
+            session_candidates(Some("7".into()), Some("4".into())),
+            vec!["7".to_string(), "4".to_string()]
+        );
+        assert!(session_candidates(None, None).is_empty());
+    }
+
+    #[test]
+    fn un_candidato_repetido_se_prueba_una_vez() {
+        assert_eq!(
+            session_candidates(Some("4".into()), Some("4".into())),
+            vec!["4".to_string()]
+        );
+    }
+
+    /// Un logind falso al otro lado de un par de sockets: sin bus ni daemon.
+    mod logind_falso {
+        use super::*;
+        use tokio::net::UnixStream;
+
+        struct Usuario(String);
+
+        #[zbus::interface(name = "org.freedesktop.login1.User")]
+        impl Usuario {
+            #[zbus(property)]
+            fn display(&self) -> (String, OwnedObjectPath) {
+                (
+                    self.0.clone(),
+                    OwnedObjectPath::try_from("/org/freedesktop/login1/session/_34").unwrap(),
+                )
+            }
+        }
+
+        /// El cliente de `display_session`, con el servidor sirviendo `usuario`.
+        async fn cliente(usuario: Option<&str>) -> (zbus::Connection, zbus::Connection) {
+            let (a, b) = UnixStream::pair().unwrap();
+            let servidor = zbus::connection::Builder::unix_stream(a)
+                .server(zbus::Guid::generate())
+                .unwrap()
+                .p2p();
+            // Sin ningún objeto servido el servidor no contesta ni con error;
+            // «sin el objeto» es servir otro, no ninguno.
+            let (ruta, id) = match usuario {
+                Some(id) => ("/org/freedesktop/login1/user/self", id),
+                None => ("/org/freedesktop/login1/user/otro", ""),
+            };
+            let servidor = servidor.serve_at(ruta, Usuario(id.to_string())).unwrap();
+            let cliente = zbus::connection::Builder::unix_stream(b).p2p();
+            let (servidor, cliente) = tokio::join!(servidor.build(), cliente.build());
+            (servidor.unwrap(), cliente.unwrap())
+        }
+
+        #[tokio::test]
+        async fn la_sesion_grafica_sale_de_logind() {
+            let (_servidor, conexion) = cliente(Some("4")).await;
+            assert_eq!(display_session(&conexion).await, Some("4".to_string()));
+        }
+
+        #[tokio::test]
+        async fn un_usuario_sin_sesion_grafica_no_da_sesion() {
+            let (_servidor, conexion) = cliente(Some("")).await;
+            assert_eq!(display_session(&conexion).await, None);
+        }
+
+        #[tokio::test]
+        async fn sin_el_objeto_de_logind_no_da_sesion() {
+            let (_servidor, conexion) = cliente(None).await;
+            assert_eq!(display_session(&conexion).await, None);
+        }
+    }
 }
