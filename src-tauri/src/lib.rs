@@ -381,12 +381,12 @@ async fn register_polkit_agent(
 
         match result {
             Ok(_) => {
-                eprintln!("[vasak-polkit] Registered successfully with session {sid}");
+                eprintln!("[vasak-polkit] Registered successfully");
                 registered = true;
                 break;
             }
             Err(e) => {
-                eprintln!("[vasak-polkit] Session {sid} failed: {e}");
+                eprintln!("[vasak-polkit] A session candidate failed: {e}");
             }
         }
     }
@@ -506,5 +506,61 @@ mod pruebas_de_sesion {
             session_candidates(Some("4".into()), Some("4".into())),
             vec!["4".to_string()]
         );
+    }
+
+    /// Un logind falso al otro lado de un par de sockets: sin bus ni daemon.
+    mod logind_falso {
+        use super::*;
+        use tokio::net::UnixStream;
+
+        struct Usuario(String);
+
+        #[zbus::interface(name = "org.freedesktop.login1.User")]
+        impl Usuario {
+            #[zbus(property)]
+            fn display(&self) -> (String, OwnedObjectPath) {
+                (
+                    self.0.clone(),
+                    OwnedObjectPath::try_from("/org/freedesktop/login1/session/_34").unwrap(),
+                )
+            }
+        }
+
+        /// El cliente de `display_session`, con el servidor sirviendo `usuario`.
+        async fn cliente(usuario: Option<&str>) -> (zbus::Connection, zbus::Connection) {
+            let (a, b) = UnixStream::pair().unwrap();
+            let servidor = zbus::connection::Builder::unix_stream(a)
+                .server(zbus::Guid::generate())
+                .unwrap()
+                .p2p();
+            // Sin ningún objeto servido el servidor no contesta ni con error;
+            // «sin el objeto» es servir otro, no ninguno.
+            let (ruta, id) = match usuario {
+                Some(id) => ("/org/freedesktop/login1/user/self", id),
+                None => ("/org/freedesktop/login1/user/otro", ""),
+            };
+            let servidor = servidor.serve_at(ruta, Usuario(id.to_string())).unwrap();
+            let cliente = zbus::connection::Builder::unix_stream(b).p2p();
+            let (servidor, cliente) = tokio::join!(servidor.build(), cliente.build());
+            (servidor.unwrap(), cliente.unwrap())
+        }
+
+        #[tokio::test]
+        async fn la_sesion_grafica_sale_de_logind() {
+            let (_servidor, conexion) = cliente(Some("4")).await;
+            assert_eq!(display_session(&conexion).await, Some("4".to_string()));
+        }
+
+        #[tokio::test]
+        async fn un_usuario_sin_sesion_grafica_no_da_sesion() {
+            let (_servidor, conexion) = cliente(Some("")).await;
+            assert_eq!(display_session(&conexion).await, None);
+        }
+
+        #[tokio::test]
+        async fn sin_el_objeto_de_logind_no_da_sesion() {
+            let (_servidor, conexion) = cliente(None).await;
+            assert_eq!(display_session(&conexion).await, None);
+        }
     }
 }
