@@ -61,7 +61,7 @@ describe('el frame del diálogo', () => {
 
 		expect(frame.classes()).not.toContain('animate-shake');
 
-		await emit('polkit-result', { success: false, message: '' });
+		await emit('polkit-result', { success: false, cookie: 'c', message: '' });
 		await opened.vm.$nextTick();
 
 		expect(opened.findComponent(WindowFrame).classes()).toContain('animate-shake');
