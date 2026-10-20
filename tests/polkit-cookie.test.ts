@@ -9,7 +9,7 @@ import { forgetThemeIcons } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import PolkitModal from '@/components/PolkitModal.vue';
 import { useDialogs } from '@/composables/useDialogs';
-import { emit, forgetEverything, putInTheme } from './doubles';
+import { emit, forgetEverything, putInTheme, rejections } from './doubles';
 
 const { polkitAsking } = useDialogs();
 const views: VueWrapper[] = [];
@@ -91,5 +91,20 @@ describe('polkit: varios pedidos, un solo diálogo', () => {
 		await emit('polkit-request', { message: 'otro', cookie: 'c2' });
 		await view.vm.$nextTick();
 		expect(passwordField().value).toBe('');
+	});
+});
+
+describe('polkit: un envío que el backend rechaza', () => {
+	test('muestra el mensaje traducido y no el texto crudo del backend', async () => {
+		rejections.set('submit_password', 'No hay un pedido pendiente');
+		const view = await askFor('c1');
+		await typePassword(view, 'secreta');
+
+		document.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
+		await Promise.resolve();
+		await view.vm.$nextTick();
+
+		expect(view.text()).toContain('polkit.sendError');
+		expect(view.text()).not.toContain('No hay un pedido pendiente');
 	});
 });

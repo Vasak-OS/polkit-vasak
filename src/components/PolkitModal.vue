@@ -50,8 +50,9 @@ async function submit() {
 	await invoke('submit_password', {
 		password: password.value,
 		cookie: cookie.value,
-	}).catch((e: unknown) => {
-		error.value = typeof e === 'string' ? e : t('polkit.sendError');
+	}).catch(() => {
+		// Lo que rechaza el backend es interno y viene sin traducir: se muestra lo nuestro.
+		error.value = t('polkit.sendError');
 		loading.value = false;
 	});
 }
