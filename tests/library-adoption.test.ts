@@ -21,8 +21,8 @@ import {
 	Checkbox,
 	FormGroup,
 	forgetThemeIcons,
+	PasswordField,
 	SectionHeading,
-	TextInput,
 	WindowFrame,
 } from '@vasakgroup/vue-libvasak';
 import { mount, type VueWrapper } from '@vue/test-utils';
@@ -93,8 +93,8 @@ describe('el campo de contraseña de polkit', () => {
 	test('es el del sistema, dentro del grupo que ata el error', async () => {
 		const opened = await askForAuth();
 
-		expect(opened.findComponent(TextInput).exists()).toBe(true);
-		expect(opened.findComponent(FormGroup).findComponent(TextInput).exists()).toBe(true);
+		expect(opened.findComponent(PasswordField).exists()).toBe(true);
+		expect(opened.findComponent(FormGroup).findComponent(PasswordField).exists()).toBe(true);
 	});
 
 	test('sin error no dice que sea inválido ni apunta a ningún renglón', async () => {
@@ -193,7 +193,10 @@ describe('las piezas son las de la librería', () => {
 			expect(opened.findComponent(SectionHeading).exists()).toBe(true);
 			expect(opened.findComponent(WindowFrame).props('hideBar')).toBe(true);
 			// Ningún botón dibujado a mano al lado de los de la librería.
-			const own = opened.findAll('button').filter((button) => !button.classes().includes('rounded-corner-m'));
+			// El botón de mostrar es de `PasswordField`, que es de la librería.
+			const own = opened
+				.findAll('button')
+				.filter((button) => !button.classes().includes('rounded-corner-m') && !button.element.closest('[data-password-field]'));
 			expect(own).toHaveLength(0);
 		});
 	}
@@ -276,5 +279,40 @@ describe('lo que los diálogos ya no dibujan', () => {
 		}
 
 		expect(culprits).toEqual([]);
+	});
+});
+
+describe('la contraseña se puede mostrar', () => {
+	// Un `<input type="password">` crudo no trae el botón: sin él, quien escribe
+	// mal una contraseña larga no tiene cómo comprobarla. Lo trae `PasswordField`.
+	for (const [name, open] of [
+		['polkit', askForAuth],
+		['el disco', () => askForPassphrase()],
+	] as const) {
+		test(`en ${name}: el campo es PasswordField y su botón alterna entre ocultar y mostrar`, async () => {
+			const opened = await open();
+
+			expect(opened.findComponent(PasswordField).exists()).toBe(true);
+			const reveal = opened.find('[data-password-field] button[aria-pressed]');
+			expect(reveal.exists()).toBe(true);
+			expect(reveal.attributes('aria-pressed')).toBe('false');
+			expect(opened.find('input').attributes('type')).toBe('password');
+
+			await reveal.trigger('click');
+
+			expect(reveal.attributes('aria-pressed')).toBe('true');
+			expect(opened.find('input').attributes('type')).toBe('text');
+		});
+	}
+
+	test('en polkit: Enter sigue enviando con la contraseña mostrada', async () => {
+		const opened = await askForAuth();
+		const { invocations, invocationArgs } = await import('./doubles');
+
+		await opened.find('[data-password-field] button[aria-pressed]').trigger('click');
+		await opened.find('input').setValue('secreta');
+		await opened.find('form').trigger('submit');
+
+		expect(invocationArgs[invocations.indexOf('submit_password')]).toMatchObject({ password: 'secreta' });
 	});
 });

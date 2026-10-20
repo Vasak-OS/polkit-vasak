@@ -6,8 +6,8 @@ import {
 	ActionButton,
 	Checkbox,
 	FormGroup,
+	PasswordField,
 	SectionHeading,
-	TextInput,
 	ThemeIcon,
 	WindowFrame,
 } from '@vasakgroup/vue-libvasak';
@@ -33,7 +33,7 @@ const remember = ref(false);
 const error = ref('');
 const sending = ref(false);
 const shaking = ref(false);
-const field = ref<InstanceType<typeof TextInput> | null>(null);
+const field = ref<InstanceType<typeof PasswordField> | null>(null);
 
 let unlistenRequest: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
@@ -183,11 +183,10 @@ onUnmounted(() => {
               <!-- La casilla va adentro del grupo, entre el campo y el error: es
                    el orden de siempre, y el error sigue atado al campo. -->
               <FormGroup label="" :error="error" v-slot="{ id: fieldId, describedBy, invalid }">
-                <TextInput
+                <PasswordField
                   :id="fieldId"
                   ref="field"
                   v-model="passphrase"
-                  type="password"
                   :ariaLabel="t('unlock.passphrase')"
                   :placeholder="t('unlock.passphrase')"
                   autocomplete="off"
