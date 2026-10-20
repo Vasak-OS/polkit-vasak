@@ -5,8 +5,8 @@ import { useI18n } from '@vasakgroup/tauri-plugin-i18n';
 import {
 	ActionButton,
 	FormGroup,
+	PasswordField,
 	SectionHeading,
-	TextInput,
 	ThemeIcon,
 	WindowFrame,
 } from '@vasakgroup/vue-libvasak';
@@ -36,7 +36,7 @@ const password = ref('');
 const error = ref('');
 const loading = ref(false);
 const shaking = ref(false);
-const inputRef = ref<InstanceType<typeof TextInput> | null>(null);
+const inputRef = ref<InstanceType<typeof PasswordField> | null>(null);
 
 let unlistenRequest: UnlistenFn | null = null;
 let unlistenResult: UnlistenFn | null = null;
@@ -178,11 +178,10 @@ onUnmounted(() => {
                    dice nada a quien no mira la pantalla. Va sin etiqueta visible;
                    el nombre del campo lo da `ariaLabel`. -->
               <FormGroup label="" :error="error" v-slot="{ id, describedBy, invalid }">
-                <TextInput
+                <PasswordField
                   :id="id"
                   ref="inputRef"
                   v-model="password"
-                  type="password"
                   :ariaLabel="t('polkit.password')"
                   :placeholder="t('polkit.password')"
                   autocomplete="current-password"
