@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { invoke } from '@tauri-apps/api/core';
 import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
@@ -10,6 +11,8 @@ import UnlockModal from '@/components/UnlockModal.vue';
 // enseguida, porque este diálogo aparece encima de lo que sea que estés
 // haciendo.
 onMounted(() => {
+	// Afina el WebKit de la ventana para bajar su consumo; no bloquea el montaje.
+	invoke('tune_webview').catch(() => {});
 	// El tipo del store llega genérico desde el plugin; el mismo molde que usa
 	// la pantalla de bloqueo.
 	const config = useConfigStore();
