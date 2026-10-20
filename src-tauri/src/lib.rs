@@ -1,3 +1,4 @@
+mod commands;
 mod desbloqueo;
 mod llavero;
 mod locales;
@@ -462,7 +463,8 @@ pub fn run() {
             submit_password,
             cancel_pending,
             desbloqueo::enviar_frase,
-            desbloqueo::cancelar_desbloqueo
+            desbloqueo::cancelar_desbloqueo,
+            commands::webkit::tune_webview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
