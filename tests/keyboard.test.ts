@@ -126,7 +126,7 @@ describe('polkit: el foco', () => {
 		(cancel?.element as HTMLButtonElement).focus();
 		expect(document.activeElement).not.toBe(field);
 
-		await emit('polkit-result', { success: false, message: '' });
+		await emit('polkit-result', { success: false, cookie: 'c', message: '' });
 		await view.vm.$nextTick();
 		await view.vm.$nextTick();
 

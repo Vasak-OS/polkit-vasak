@@ -1,6 +1,6 @@
 [package]
 name = "vasak-polkit-agent"
-version = "0.8.2"
+version = "0.8.3"
 description = "A Vasak Application (template)"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -45,6 +45,8 @@ zeroize = "1"
 [dev-dependencies]
 # Sólo para el test que valida los catálogos de idioma.
 serde_yaml = "0.9"
+# El runtime de mentira, para armar el agente sin ventana.
+tauri = { version = "2", features = ["test"] }
 # Un par de conexiones sin bus para probar la llamada a logind.
 zbus = { version = "4", features = ["tokio", "p2p"] }
 

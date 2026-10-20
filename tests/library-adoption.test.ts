@@ -113,7 +113,7 @@ describe('el campo de contraseña de polkit', () => {
 	test('con la contraseña equivocada, el error se anuncia y cuelga del campo', async () => {
 		const opened = await askForAuth();
 
-		await emit('polkit-result', { success: false, message: '' });
+		await emit('polkit-result', { success: false, cookie: 'c', message: '' });
 		await opened.vm.$nextTick();
 
 		const line = errorLine(opened);

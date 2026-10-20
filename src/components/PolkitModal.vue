@@ -40,6 +40,7 @@ const inputRef = ref<InstanceType<typeof TextInput> | null>(null);
 
 let unlistenRequest: UnlistenFn | null = null;
 let unlistenResult: UnlistenFn | null = null;
+let unlistenCancel: UnlistenFn | null = null;
 
 async function submit() {
 	if (!password.value || !cookie.value || loading.value) return;
@@ -49,8 +50,9 @@ async function submit() {
 	await invoke('submit_password', {
 		password: password.value,
 		cookie: cookie.value,
-	}).catch((e: unknown) => {
-		error.value = typeof e === 'string' ? e : t('polkit.sendError');
+	}).catch(() => {
+		// Lo que rechaza el backend es interno y viene sin traducir: se muestra lo nuestro.
+		error.value = t('polkit.sendError');
 		loading.value = false;
 	});
 }
@@ -101,7 +103,15 @@ onMounted(async () => {
 		nextTick(() => inputRef.value?.focus());
 	});
 
+	// Sólo lo del pedido a la vista: otro que termina o se cancela no lo toca.
+	unlistenCancel = await listen<{ cookie: string }>('polkit-cancel', (event) => {
+		if (event.payload.cookie !== cookie.value) return;
+		polkitAsking.value = false;
+		password.value = '';
+	});
+
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
+		if (event.payload.cookie !== cookie.value) return;
 		if (event.payload.success) {
 			polkitAsking.value = false;
 		} else {
@@ -118,6 +128,7 @@ onUnmounted(() => {
 	document.removeEventListener('keydown', onKeydown);
 	unlistenRequest?.();
 	unlistenResult?.();
+	unlistenCancel?.();
 });
 </script>
 
