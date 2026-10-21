@@ -9,24 +9,37 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 use zbus::interface;
 use zvariant::{OwnedValue, Value};
 
 struct AppState {
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
 }
+
+type BoxFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+
+/// Verifica una contraseña contra una identidad y devuelve si fue válida.
+///
+/// En producción es el ayudante setuid (`call_authentication_helper`); las
+/// pruebas inyectan uno de mentira para ejercitar el bucle de reintentos sin el
+/// binario ni PAM. Los argumentos son `(password, cookie, identity_kind, uid,
+/// subject_pid)`, el mismo orden que el ayudante.
+type Authenticator = Arc<dyn Fn(String, String, String, u32, u32) -> BoxFuture + Send + Sync>;
 
 // Genérico en el runtime sólo para que las pruebas usen el de mentira de
 // Tauri (`tauri::test`): en producción siempre es el real.
 struct PolkitAgent<R: tauri::Runtime> {
     app_handle: AppHandle<R>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     /// El turno del diálogo: la ventana muestra un pedido por vez. Sin esto, con
     /// los métodos en `&self`, un segundo pedido —un `pkexec` cualquiera— pisaba
     /// el texto del que estaba a la vista y se llevaba la contraseña que la
     /// persona escribía para lo que estaba haciendo.
     dialog: Arc<tokio::sync::Mutex<()>>,
+    /// Cómo se verifica la contraseña. Inyectado para poder probar el bucle de
+    /// reintentos; en producción es el ayudante setuid.
+    authenticate: Authenticator,
 }
 
 /// Una identidad que polkit ofrece para autenticar: tipo y detalles (`uid`).
@@ -85,51 +98,16 @@ impl<R: tauri::Runtime> PolkitAgent<R> {
             .and_then(|(_, d)| d.get("uid"))
             .and_then(|v| u32::try_from(v).ok());
 
-        let (password_tx, password_rx) = oneshot::channel::<String>();
-        let (done_tx, done_rx) = oneshot::channel::<bool>();
+        // `mpsc` y no `oneshot`: la misma cookie recibe varios intentos sin
+        // volver a registrarse ante polkitd, que mantiene viva la sesión mientras
+        // este método no retorne. Soltar el emisor (cancelar) cierra el canal y
+        // `recv` devuelve `None`, que corta el bucle y suelta el turno.
+        let (password_tx, mut password_rx) = mpsc::channel::<String>(1);
 
         self.pending
             .lock()
             .expect("lock pending")
             .insert(cookie_owned.clone(), password_tx);
-
-        let cookie_task = cookie_owned.clone();
-        let subject_pid_task = subject_pid;
-        let identity_kind_task = identity_kind.clone();
-
-        tokio::spawn(async move {
-            let password = match password_rx.await {
-                Ok(pwd) => pwd,
-                Err(_) => {
-                    let _ = done_tx.send(false);
-                    return;
-                }
-            };
-
-            // Without a concrete identity from polkit we cannot authenticate;
-            // fail closed rather than guessing an account.
-            let uid = match identity_uid {
-                Some(uid) => uid,
-                None => {
-                    eprintln!("[vasak-polkit] no identity uid supplied by polkit");
-                    let _ = done_tx.send(false);
-                    return;
-                }
-            };
-
-            // The setuid helper performs the PAM check (as root, for `uid`) and
-            // only then answers polkitd. The agent never authenticates itself.
-            let ok = call_authentication_helper(
-                password,
-                cookie_task,
-                identity_kind_task,
-                uid,
-                subject_pid_task,
-            )
-            .await;
-
-            let _ = done_tx.send(ok);
-        });
 
         let _turn = self.dialog.lock().await;
         // Si polkitd la canceló mientras esperaba su turno, no hay qué mostrar.
@@ -155,28 +133,106 @@ impl<R: tauri::Runtime> PolkitAgent<R> {
             }),
         );
 
-        // Block until auth flow completes — polkitd removes the session
-        // from active_sessions immediately after begin_authentication returns.
-        let success = done_rx.await.unwrap_or(false);
+        // Se reintenta en el sitio mientras polkitd mantenga la sesión, como hace
+        // polkit-gnome: este método **no retorna** entre intentos, así la cookie
+        // sigue viva y el ayudante se puede volver a llamar con ella. Con una
+        // contraseña equivocada se vuelve a pedir hasta `MAX_INTENTOS`; recién ahí
+        // se cierra. Antes un solo fallo retornaba, polkitd descartaba la sesión y
+        // el reintento iba a una cookie sin pedido pendiente (`polkit-vasak#40`).
+        const MAX_INTENTOS: u32 = 3;
+        let mut success = false;
+        let mut intento = 0u32;
 
-        let _ = self.app_handle.emit(
-            "polkit-result",
-            serde_json::json!({
-                "success": success,
-                "cookie": cookie_owned,
-                "action_id": action_id_owned,
-                "message": if success { "" } else { "Autenticación fallida" },
-            }),
-        );
+        loop {
+            intento += 1;
 
-        eprintln!("[vasak-polkit] auth result success={success}");
+            // Sin emisor en el canal, el pedido se canceló (la persona, o polkitd):
+            // el diálogo ya se cerró por su lado, se termina sin emitir resultado.
+            let password = match password_rx.recv().await {
+                Some(pwd) => pwd,
+                None => {
+                    self.pending
+                        .lock()
+                        .expect("lock pending")
+                        .remove(&cookie_owned);
+                    return;
+                }
+            };
+
+            // The setuid helper performs the PAM check (as root, for `uid`) and
+            // only then answers polkitd. The agent never authenticates itself.
+            // Without a concrete identity from polkit we cannot authenticate: fail
+            // closed, and retrying would not help, so it is not retryable.
+            match identity_uid {
+                Some(uid) => {
+                    success = (self.authenticate)(
+                        password,
+                        cookie_owned.clone(),
+                        identity_kind.clone(),
+                        uid,
+                        subject_pid,
+                    )
+                    .await;
+                    if success {
+                        break;
+                    }
+                }
+                None => eprintln!("[vasak-polkit] no identity uid supplied by polkit"),
+            }
+
+            let puede_reintentar = identity_uid.is_some() && intento < MAX_INTENTOS;
+
+            // `retry` le dice al diálogo si seguir abierto para otro intento o
+            // cerrarse: sin eso, al agotar los intentos quedaba abierto sobre una
+            // sesión muerta, el mismo `#40` en el último intento. El mensaje va
+            // vacío para que el frontend muestre su `polkit.wrongPassword`
+            // traducido.
+            let _ = self.app_handle.emit(
+                "polkit-result",
+                serde_json::json!({
+                    "success": false,
+                    "cookie": cookie_owned,
+                    "action_id": action_id_owned,
+                    "message": "",
+                    "retry": puede_reintentar,
+                }),
+            );
+            eprintln!("[vasak-polkit] auth result success=false retry={puede_reintentar}");
+
+            if !puede_reintentar {
+                break;
+            }
+            // El emisor sigue en el mapa (`submit_password` no lo saca), así que el
+            // siguiente `recv` espera la próxima contraseña sin rearmar nada.
+        }
+
+        self.pending
+            .lock()
+            .expect("lock pending")
+            .remove(&cookie_owned);
 
         if success {
-            // Let the Vue leave transition play before hiding the window
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            if let Some(window) = self.app_handle.get_webview_window("main") {
-                let _ = window.hide();
-            }
+            let _ = self.app_handle.emit(
+                "polkit-result",
+                serde_json::json!({
+                    "success": true,
+                    "cookie": cookie_owned,
+                    "action_id": action_id_owned,
+                    "message": "",
+                    "retry": false,
+                }),
+            );
+            eprintln!("[vasak-polkit] auth result success=true");
+        }
+
+        // Ocultar la ventana del SO al cerrar, sea por éxito o por intentos
+        // agotados: el frontend quita el contenido, pero la ventana translúcida
+        // quedaría vacía a la vista hasta el próximo pedido. Se deja correr la
+        // transición de salida de Vue antes de ocultar. (La cancelación retorna
+        // antes, sin llegar acá.)
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if let Some(window) = self.app_handle.get_webview_window("main") {
+            let _ = window.hide();
         }
     }
 
@@ -198,14 +254,19 @@ async fn submit_password(
     password: String,
     cookie: String,
 ) -> Result<bool, String> {
+    // Se clona el emisor y se deja en el mapa: la misma cookie admite varios
+    // intentos (ver el bucle de `begin_authentication`). Lo saca ese bucle al
+    // terminar, o `cancel_*` al cancelar.
     let tx = state
         .pending
         .lock()
         .map_err(|e| e.to_string())?
-        .remove(&cookie)
+        .get(&cookie)
+        .cloned()
         .ok_or_else(|| "No hay un pedido pendiente".to_string())?;
 
     tx.send(password)
+        .await
         .map_err(|_| "Receiver dropped".to_string())?;
     Ok(true)
 }
@@ -343,7 +404,7 @@ fn session_candidates(env: Option<String>, display: Option<String>) -> Vec<Strin
 
 async fn register_polkit_agent(
     app_handle: AppHandle,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     desbloqueos: desbloqueo::DialogosPendientes,
 ) {
     let conn = zbus::Connection::system()
@@ -354,6 +415,9 @@ async fn register_polkit_agent(
         app_handle: app_handle.clone(),
         pending: pending.clone(),
         dialog: Arc::default(),
+        authenticate: Arc::new(|password, cookie, kind, uid, pid| {
+            Box::pin(call_authentication_helper(password, cookie, kind, uid, pid))
+        }),
     };
 
     conn.object_server()
@@ -640,9 +704,26 @@ mod pruebas_de_sesion {
         const INTERFAZ: &str = "org.freedesktop.PolicyKit1.AuthenticationAgent";
         const PLAZO: Duration = Duration::from_secs(5);
 
-        type Pendientes = Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>;
+        type Pendientes = Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>;
+
+        /// Un autenticador que siempre rechaza, para las pruebas que cancelan
+        /// antes de mandar una contraseña y nunca lo llaman.
+        fn siempre_falla() -> Authenticator {
+            Arc::new(|_, _, _, _, _| Box::pin(async { false }))
+        }
 
         async fn montar() -> (
+            zbus::Connection,
+            zbus::Connection,
+            Pendientes,
+            tauri::App<MockRuntime>,
+        ) {
+            montar_con(siempre_falla()).await
+        }
+
+        async fn montar_con(
+            authenticate: Authenticator,
+        ) -> (
             zbus::Connection,
             zbus::Connection,
             Pendientes,
@@ -654,6 +735,7 @@ mod pruebas_de_sesion {
                 app_handle: app.handle().clone(),
                 pending: pendientes.clone(),
                 dialog: Arc::default(),
+                authenticate,
             };
             let (a, b) = UnixStream::pair().unwrap();
             let servidor = zbus::connection::Builder::unix_stream(a)
@@ -854,6 +936,214 @@ mod pruebas_de_sesion {
                 .unwrap()
                 .unwrap()
                 .unwrap();
+        }
+
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        /// Un autenticador que responde según `resultados` por número de llamada
+        /// (más allá del largo, rechaza) y lleva la cuenta de cuántas veces se lo
+        /// llamó. Así se ve cuántos intentos hizo el bucle sin el ayudante ni PAM.
+        fn autenticador(resultados: Vec<bool>) -> (Authenticator, Arc<AtomicU32>) {
+            let llamadas = Arc::new(AtomicU32::new(0));
+            let cuenta = llamadas.clone();
+            let auth: Authenticator = Arc::new(move |_, _, _, _, _| {
+                let n = cuenta.fetch_add(1, Ordering::SeqCst) as usize;
+                let ok = resultados.get(n).copied().unwrap_or(false);
+                Box::pin(async move { ok })
+            });
+            (auth, llamadas)
+        }
+
+        /// `BeginAuthentication` con una identidad concreta, para que el agente
+        /// tenga un uid que autenticar y llegue a llamar al autenticador.
+        fn empezar_con_identidad(
+            cliente: &zbus::Connection,
+            cookie: &'static str,
+            uid: u32,
+        ) -> tokio::task::JoinHandle<zbus::Result<()>> {
+            let cliente = cliente.clone();
+            tokio::spawn(async move {
+                let mut detalles: HashMap<String, OwnedValue> = HashMap::new();
+                detalles.insert("uid".to_string(), Value::U32(uid).try_into().unwrap());
+                let identidades: Vec<Identity> = vec![("unix-user".to_string(), detalles)];
+                let cuerpo = (
+                    "org.ejemplo.accion",
+                    "mensaje",
+                    "",
+                    HashMap::<String, String>::new(),
+                    cookie,
+                    identidades,
+                );
+                cliente
+                    .call_method(
+                        None::<&str>,
+                        RUTA,
+                        Some(INTERFAZ),
+                        "BeginAuthentication",
+                        &cuerpo,
+                    )
+                    .await
+                    .map(|_| ())
+            })
+        }
+
+        /// Imita a `submit_password`: toma el emisor del mapa (sin sacarlo) y le
+        /// manda la contraseña, igual que lo hace el comando de Tauri.
+        async fn enviar_password(pendientes: &Pendientes, cookie: &str, pwd: &str) {
+            let tx = pendientes
+                .lock()
+                .unwrap()
+                .get(cookie)
+                .cloned()
+                .expect("hay un pedido pendiente");
+            tx.send(pwd.to_string())
+                .await
+                .expect("el receptor sigue vivo");
+        }
+
+        /// Los `polkit-result` emitidos como `(success, retry)`, en orden.
+        fn resultados_emitidos(app: &tauri::App<MockRuntime>) -> Arc<Mutex<Vec<(bool, bool)>>> {
+            use tauri::Listener;
+            let vistos: Arc<Mutex<Vec<(bool, bool)>>> = Arc::default();
+            let destino = vistos.clone();
+            app.listen("polkit-result", move |evento| {
+                let carga: serde_json::Value = serde_json::from_str(evento.payload()).unwrap();
+                let success = carga["success"].as_bool().unwrap();
+                let retry = carga["retry"].as_bool().unwrap_or(false);
+                destino.lock().unwrap().push((success, retry));
+            });
+            vistos
+        }
+
+        async fn esperar_resultados(vistos: &Arc<Mutex<Vec<(bool, bool)>>>, cuantos: usize) {
+            tokio::time::timeout(PLAZO, async {
+                while vistos.lock().unwrap().len() < cuantos {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("no llegaron {cuantos} polkit-result"));
+        }
+
+        /// El corazón de `#40`: una contraseña equivocada vuelve a pedir en el
+        /// sitio en vez de dejar el diálogo muerto, hasta el tope de intentos, y
+        /// recién ahí cierra. Sin el bucle, el primer fallo sacaba el pedido del
+        /// mapa y retornaba: `contains_key` tras el fallo era falso y no había un
+        /// segundo `polkit-result`.
+        #[tokio::test]
+        async fn una_contrasena_equivocada_vuelve_a_pedir_hasta_el_tope_y_despues_cierra() {
+            let (auth, llamadas) = autenticador(vec![false, false, false]);
+            let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
+            let resultados = resultados_emitidos(&app);
+            let inicio = empezar_con_identidad(&cliente, "c1", 1000);
+            esperar_pendiente(&pendientes, "c1").await;
+
+            enviar_password(&pendientes, "c1", "mala").await;
+            esperar_resultados(&resultados, 1).await;
+            assert_eq!(
+                resultados.lock().unwrap()[0],
+                (false, true),
+                "primer fallo: reintentable"
+            );
+            assert!(
+                pendientes.lock().unwrap().contains_key("c1"),
+                "tras un fallo el pedido sigue pendiente para reintentar"
+            );
+
+            enviar_password(&pendientes, "c1", "mala").await;
+            esperar_resultados(&resultados, 2).await;
+            assert_eq!(
+                resultados.lock().unwrap()[1],
+                (false, true),
+                "segundo fallo: reintentable"
+            );
+            assert!(pendientes.lock().unwrap().contains_key("c1"));
+
+            enviar_password(&pendientes, "c1", "mala").await;
+            esperar_resultados(&resultados, 3).await;
+            assert_eq!(
+                resultados.lock().unwrap()[2],
+                (false, false),
+                "al tercer fallo se agotan los intentos y se cierra"
+            );
+
+            tokio::time::timeout(PLAZO, inicio)
+                .await
+                .expect("BeginAuthentication no terminó al agotar los intentos")
+                .unwrap()
+                .unwrap();
+            assert!(
+                pendientes.lock().unwrap().is_empty(),
+                "al cerrar no queda el pedido colgado en el mapa"
+            );
+            assert_eq!(
+                llamadas.load(Ordering::SeqCst),
+                3,
+                "se intentó exactamente tres veces"
+            );
+        }
+
+        /// Tras una equivocada, la contraseña correcta autentica y cierra con
+        /// éxito, sin agotar el tope.
+        #[tokio::test]
+        async fn tras_una_equivocada_la_correcta_autentica_y_cierra() {
+            let (auth, llamadas) = autenticador(vec![false, true]);
+            let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
+            let resultados = resultados_emitidos(&app);
+            let inicio = empezar_con_identidad(&cliente, "c1", 1000);
+            esperar_pendiente(&pendientes, "c1").await;
+
+            enviar_password(&pendientes, "c1", "mala").await;
+            esperar_resultados(&resultados, 1).await;
+            assert_eq!(resultados.lock().unwrap()[0], (false, true));
+
+            enviar_password(&pendientes, "c1", "buena").await;
+            esperar_resultados(&resultados, 2).await;
+            assert_eq!(
+                resultados.lock().unwrap()[1],
+                (true, false),
+                "la correcta autentica"
+            );
+
+            tokio::time::timeout(PLAZO, inicio)
+                .await
+                .expect("BeginAuthentication no terminó tras autenticar")
+                .unwrap()
+                .unwrap();
+            assert!(pendientes.lock().unwrap().is_empty());
+            assert_eq!(llamadas.load(Ordering::SeqCst), 2);
+        }
+
+        /// Sin un uid de identidad no hay a quién autenticar: se falla cerrado y
+        /// **no** se reintenta (reintentar no cambiaría nada), se cierra directo.
+        #[tokio::test]
+        async fn sin_identidad_falla_cerrado_y_no_reintenta() {
+            // `empezar` manda la lista de identidades vacía.
+            let (auth, llamadas) = autenticador(vec![true, true, true]);
+            let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
+            let resultados = resultados_emitidos(&app);
+            let inicio = empezar(&cliente, "c1");
+            esperar_pendiente(&pendientes, "c1").await;
+
+            enviar_password(&pendientes, "c1", "lo-que-sea").await;
+            esperar_resultados(&resultados, 1).await;
+            assert_eq!(
+                resultados.lock().unwrap()[0],
+                (false, false),
+                "sin identidad no se reintenta"
+            );
+
+            tokio::time::timeout(PLAZO, inicio)
+                .await
+                .expect("no terminó")
+                .unwrap()
+                .unwrap();
+            assert!(pendientes.lock().unwrap().is_empty());
+            assert_eq!(
+                llamadas.load(Ordering::SeqCst),
+                0,
+                "no se llama al autenticador sin uid"
+            );
         }
     }
 }

@@ -22,6 +22,10 @@ interface PolkitResult {
 	success: boolean;
 	cookie: string;
 	message?: string;
+	// Un fallo con `retry` mantiene el diálogo abierto para otro intento; sin él
+	// (intentos agotados) se cierra, porque la sesión de polkit ya terminó y
+	// seguir pidiendo mandaría la contraseña a una cookie muerta (#40).
+	retry?: boolean;
 }
 
 const { t } = useI18n();
@@ -114,12 +118,21 @@ onMounted(async () => {
 		if (event.payload.cookie !== cookie.value) return;
 		if (event.payload.success) {
 			polkitAsking.value = false;
-		} else {
+		} else if (event.payload.retry) {
+			// Contraseña equivocada pero quedan intentos: se queda abierto, muestra
+			// el error y vuelve a enfocar para probar de nuevo.
 			error.value = event.payload.message || t('polkit.wrongPassword');
 			password.value = '';
 			loading.value = false;
 			triggerShake();
 			nextTick(() => inputRef.value?.focus());
+		} else {
+			// Intentos agotados (o un fallo irrecuperable): se cierra. La acción
+			// quedó denegada; quien la pidió la vuelve a pedir si hace falta.
+			polkitAsking.value = false;
+			password.value = '';
+			error.value = '';
+			loading.value = false;
 		}
 	});
 });

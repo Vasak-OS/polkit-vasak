@@ -94,6 +94,30 @@ describe('polkit: varios pedidos, un solo diálogo', () => {
 	});
 });
 
+describe('polkit: reintentar tras una contraseña equivocada (#40)', () => {
+	test('un fallo reintentable deja el diálogo abierto, muestra el error y limpia la contraseña', async () => {
+		const view = await askFor('c1');
+		await typePassword(view, 'mala');
+
+		await emit('polkit-result', { success: false, cookie: 'c1', message: '', retry: true });
+		await view.vm.$nextTick();
+
+		expect(polkitAsking.value).toBe(true);
+		expect(passwordField().value).toBe('');
+		expect(view.text()).toContain('polkit.wrongPassword');
+	});
+
+	test('un fallo sin reintento (intentos agotados) cierra el diálogo', async () => {
+		const view = await askFor('c1');
+		await typePassword(view, 'mala');
+
+		await emit('polkit-result', { success: false, cookie: 'c1', message: '', retry: false });
+		await view.vm.$nextTick();
+
+		expect(polkitAsking.value).toBe(false);
+	});
+});
+
 describe('polkit: un envío que el backend rechaza', () => {
 	test('muestra el mensaje traducido y no el texto crudo del backend', async () => {
 		rejections.set('submit_password', 'No hay un pedido pendiente');
