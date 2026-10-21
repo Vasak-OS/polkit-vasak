@@ -1,7 +1,7 @@
 {
   "name": "vasak-polkit-agent",
   "private": true,
-  "version": "0.8.5",
+  "version": "0.8.6",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -24,22 +24,23 @@
     "vue": "^3.5.44"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.2",
     "@happy-dom/global-registrator": "^20.14.6",
-    "@tauri-apps/cli": "^2.12.3",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^26.6.5",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^20.14.6",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vue-tsc": "^3.3.13"
   },
   "vasak": {
     "bibliotecasAtrasadas": {
       "pinia": "La 4 es un salto mayor de una biblioteca que usa el taller entero: el resto de las aplicaciones está en pinia 3 y subir sólo ésta parte el vocabulario compartido. Va en su propio PR, coordinado con el resto. config-manager 2.9 acepta las dos, así que ya no frena a nadie.",
       "typescript": "La 7 es el compilador nativo y no expone la API de JavaScript que lee vue-tsc 3: `vue-tsc --noEmit` se cae con ERR_PACKAGE_PATH_NOT_EXPORTED antes de mirar un archivo. Por eso ~5.9.3 y no ^5.9.3. Se sube cuando vue-tsc publique soporte para TypeScript 7.",
+      "happy-dom": "La 21 es un salto mayor del DOM de mentira sobre el que corren las pruebas del frontend, y lo que hay que verificar —que los componentes sigan montándose y respondiendo igual— es la suite entera, no una prueba puntual. Va en su propio PR del andamiaje, junto con @happy-dom/global-registrator, que acompaña su versión. El rango \"^20\" no alcanza la 21.",
       "zbus (Rust)": "zbus 4 → 5 (y zvariant 4 → 5) es una mayor de la capa de D-Bus con la que el agente se registra ante polkitd, recibe cada pedido y le habla a udisks2: cambian la forma de las interfaces y de los proxies, y lo que hay que verificar —que polkit siga entregando los pedidos y que el ayudante setuid responda— no lo dice ninguna prueba automática. Va en su propio PR, probado en una sesión real con pkexec y con un disco cifrado. El rango \"4\" del Cargo.toml no alcanza la 5."
     }
   }
