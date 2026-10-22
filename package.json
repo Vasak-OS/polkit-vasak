@@ -1,7 +1,7 @@
 {
   "name": "vasak-polkit-agent",
   "private": true,
-  "version": "0.8.6",
+  "version": "0.8.7",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -16,7 +16,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2.12.4",
-    "@vasakgroup/plugin-config-manager": "^2.12.1",
+    "@vasakgroup/plugin-config-manager": "^2.13.0",
     "@vasakgroup/plugin-vicons": "^2.2.2",
     "@vasakgroup/tauri-plugin-i18n": "^2.3.1",
     "@vasakgroup/vue-libvasak": "^2.20.1",
