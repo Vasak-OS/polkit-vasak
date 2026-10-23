@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vasak Polkit Agent</title>
+    <script>
+      // Reaplica el tema del último arranque antes de que monte Vue, para que la
+      // ventana no abra con el esquema por defecto y vire al del usuario con el
+      // fade de 300 ms. El gestor lo corrige después si cambió. Sin cache, no hace nada.
+      try {
+        var tema = JSON.parse(localStorage.getItem("vsk-theme") || "null");
+        if (tema) {
+          if (tema.dark) document.documentElement.classList.add("dark");
+          var vars = tema.vars || {};
+          for (var nombre in vars) {
+            document.documentElement.style.setProperty(nombre, vars[nombre]);
+          }
+        }
+      } catch (e) {
+        /* localStorage puede no estar disponible: sin cache, arranca como antes. */
+      }
+    </script>
   </head>
 
   <body>

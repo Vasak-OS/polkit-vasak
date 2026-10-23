@@ -4,6 +4,7 @@ import { useConfigStore } from '@vasakgroup/plugin-config-manager';
 import { onMounted } from 'vue';
 import PolkitModal from '@/components/PolkitModal.vue';
 import UnlockModal from '@/components/UnlockModal.vue';
+import { saveTheme } from '@/tools/theme-cache';
 
 // Sin esto el diálogo se queda con los colores por omisión —claros— aunque el
 // escritorio esté en tema oscuro: los colores llegan por la configuración, como
@@ -16,10 +17,15 @@ onMounted(() => {
 	// El tipo del store llega genérico desde el plugin; el mismo molde que usa
 	// la pantalla de bloqueo.
 	const config = useConfigStore();
-	config.loadConfig().catch(() => {
-		// Con los colores por omisión sigue siendo un diálogo usable; lo que no
-		// puede es no aparecer.
-	});
+	config
+		.loadConfig()
+		// Se recuerda el tema aplicado para que el próximo arranque no parpadee.
+		// Colgado de la promesa: si la lectura falla no se guarda un tema vacío.
+		.then(() => saveTheme())
+		.catch(() => {
+			// Con los colores por omisión sigue siendo un diálogo usable; lo que no
+			// puede es no aparecer.
+		});
 });
 </script>
 
