@@ -130,7 +130,10 @@ onMounted(async () => {
 	});
 
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
-		cookiesInvalidadas.add(event.payload.cookie);
+		// Sólo un resultado terminal (éxito o intentos agotados) invalida la
+		// cookie; un reintento deja el pedido vivo, así que su snapshot pendiente
+		// tiene que seguir restaurando el diálogo.
+		if (!event.payload.retry) cookiesInvalidadas.add(event.payload.cookie);
 		if (event.payload.cookie !== cookie.value) return;
 		if (event.payload.success) {
 			polkitAsking.value = false;

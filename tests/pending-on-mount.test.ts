@@ -130,6 +130,20 @@ describe('pedido pendiente al montar', () => {
 		expect(view.text()).not.toContain('Pedido A');
 	});
 
+	test('polkit: un reintento del mismo pedido durante el montaje no descarta el pendiente', async () => {
+		returns.set('polkit_pending', { message: 'Pedido A', cookie: 'A' });
+
+		const view = await mountWithEventDuringPull(PolkitModal, 'polkit_pending', 'polkit-result', {
+			cookie: 'A',
+			success: false,
+			retry: true,
+			message: 'Contraseña equivocada',
+		});
+
+		expect(polkitAsking.value).toBe(true);
+		expect(view.text()).toContain('Pedido A');
+	});
+
 	test('el desbloqueo: un evento durante el montaje gana al disco pendiente, que ya quedó viejo', async () => {
 		returns.set('unlock_pending', { id: 'viejo', name: 'Disco viejo', wrongPassphrase: true });
 
