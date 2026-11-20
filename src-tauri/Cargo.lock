@@ -4593,7 +4593,7 @@ dependencies = [
 
 [[package]]
 name = "vasak-polkit-agent"
-version = "0.8.9"
+version = "0.8.10"
 dependencies = [
  "gtk",
  "libc",

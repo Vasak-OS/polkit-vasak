@@ -94,27 +94,46 @@ function triggerShake() {
 	}, 500);
 }
 
+// Lo que hace aparecer el diálogo con un pedido, venga del evento o de la
+// pregunta al montar.
+function applyRequest(payload: PolkitRequest) {
+	message.value = payload.message;
+	cookie.value = payload.cookie;
+	password.value = '';
+	error.value = '';
+	loading.value = false;
+	polkitAsking.value = true;
+	nextTick(() => inputRef.value?.focus());
+}
+
 onMounted(async () => {
 	document.addEventListener('keydown', onKeydown);
 
+	// Qué del pedido que trae `polkit_pending` al montar ya quedó viejo. Un
+	// pedido nuevo supera a cualquiera (gana el último), así que lo tapa entero;
+	// un cancel o un resultado sólo invalidan su propia cookie, para no tirar el
+	// pedido activo cuando lo que se canceló fue otro que estaba en cola.
+	let requestRecibido = false;
+	const cookiesInvalidadas = new Set<string>();
+
 	unlistenRequest = await listen<PolkitRequest>('polkit-request', (event) => {
-		message.value = event.payload.message;
-		cookie.value = event.payload.cookie;
-		password.value = '';
-		error.value = '';
-		loading.value = false;
-		polkitAsking.value = true;
-		nextTick(() => inputRef.value?.focus());
+		requestRecibido = true;
+		applyRequest(event.payload);
 	});
 
 	// Sólo lo del pedido a la vista: otro que termina o se cancela no lo toca.
 	unlistenCancel = await listen<{ cookie: string }>('polkit-cancel', (event) => {
+		cookiesInvalidadas.add(event.payload.cookie);
 		if (event.payload.cookie !== cookie.value) return;
 		polkitAsking.value = false;
 		password.value = '';
 	});
 
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
+		// Sólo un resultado terminal (éxito o intentos agotados) invalida la
+		// cookie; un reintento deja el pedido vivo, así que su snapshot pendiente
+		// tiene que seguir restaurando el diálogo.
+		if (!event.payload.retry) cookiesInvalidadas.add(event.payload.cookie);
 		if (event.payload.cookie !== cookie.value) return;
 		if (event.payload.success) {
 			polkitAsking.value = false;
@@ -135,6 +154,14 @@ onMounted(async () => {
 			loading.value = false;
 		}
 	});
+
+	// Al montar —incluido tras recargar el webview, cuando su proceso se repuso—
+	// se pregunta si hay un pedido en curso: el `polkit-request` que lo traía se
+	// perdió en la recarga.
+	const pendiente = await invoke<PolkitRequest | null>('polkit_pending');
+	if (pendiente && !requestRecibido && !cookiesInvalidadas.has(pendiente.cookie)) {
+		applyRequest(pendiente);
+	}
 });
 
 onUnmounted(() => {

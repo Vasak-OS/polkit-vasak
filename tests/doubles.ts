@@ -16,11 +16,14 @@ export const invocationArgs: unknown[] = [];
 /** Los comandos que tienen que fallar, con lo que rechazan. */
 export const rejections = new Map<string, unknown>();
 
+/** Lo que devuelve un comando al invocarse (por omisión, `undefined`). */
+export const returns = new Map<string, unknown>();
+
 export async function invoke(command: string, args?: unknown) {
 	invocations.push(command);
 	invocationArgs.push(args);
 	if (rejections.has(command)) throw rejections.get(command);
-	return undefined;
+	return returns.get(command);
 }
 
 export async function listen(name: string, handler: (event: { payload: unknown }) => unknown) {
@@ -79,6 +82,7 @@ export function forgetEverything() {
 	invocations.length = 0;
 	invocationArgs.length = 0;
 	rejections.clear();
+	returns.clear();
 	icons.clear();
 	listeners.clear();
 }

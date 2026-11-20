@@ -273,7 +273,9 @@ describe('sin nada que preguntar', () => {
 			const event = pressEscapeIn(document.body);
 
 			expect(event.defaultPrevented).toBe(false);
-			expect(invocations).toEqual([]);
+			// Al montar, cada diálogo pregunta qué hay pendiente: eso no cuenta.
+			const pregunta = ['polkit_pending', 'unlock_pending'];
+			expect(invocations.filter((command) => !pregunta.includes(command))).toEqual([]);
 		});
 	}
 });

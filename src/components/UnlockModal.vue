@@ -113,34 +113,52 @@ function shake() {
 	}, 500);
 }
 
+// Lo que hace aparecer el diálogo con un pedido, venga del evento o de la
+// pregunta al montar. Un reintento llega como un pedido nuevo: el diálogo ya
+// estaba abierto y lo único que cambia es que ahora dice por qué se lo está
+// preguntando de vuelta.
+function applyRequest(payload: UnlockRequest) {
+	id.value = payload.id;
+	name.value = payload.name;
+	passphrase.value = '';
+	sending.value = false;
+	unlockAsking.value = true;
+
+	if (payload.wrongPassphrase) {
+		error.value = t('unlock.wrongPassphrase');
+		shake();
+	} else {
+		error.value = '';
+	}
+
+	nextTick(() => field.value?.focus());
+}
+
 onMounted(async () => {
 	document.addEventListener('keydown', onKeydown);
 
+	// Un evento del backend es la verdad más nueva: si alguno llega, el pedido
+	// que `unlock_pending` trae al montar ya quedó viejo y no se vuelve a aplicar
+	// (si no, un pedido viejo reabriría o pisaría uno que ya cambió o terminó).
+	let eventoRecibido = false;
+
 	unlistenRequest = await listen<UnlockRequest>('unlock-request', (event) => {
-		id.value = event.payload.id;
-		name.value = event.payload.name;
-		passphrase.value = '';
-		sending.value = false;
-		unlockAsking.value = true;
-
-		// Un reintento llega como un pedido nuevo: el diálogo ya estaba abierto y
-		// lo único que cambia es que ahora dice por qué se lo está preguntando de
-		// vuelta.
-		if (event.payload.wrongPassphrase) {
-			error.value = t('unlock.wrongPassphrase');
-			shake();
-		} else {
-			error.value = '';
-		}
-
-		nextTick(() => field.value?.focus());
+		eventoRecibido = true;
+		applyRequest(event.payload);
 	});
 
 	// El desbloqueo terminó —bien o mal— y la ventana se va. Quien avisa de qué
 	// pasó es el gestor de archivos, que es donde la persona está mirando.
 	unlistenDone = await listen('unlock-done', () => {
+		eventoRecibido = true;
 		close();
 	});
+
+	// Al montar —incluido tras recargar el webview, cuando su proceso se repuso—
+	// se pregunta si hay un desbloqueo en curso: el `unlock-request` que lo traía
+	// se perdió en la recarga.
+	const pendiente = await invoke<UnlockRequest | null>('unlock_pending');
+	if (pendiente && !eventoRecibido) applyRequest(pendiente);
 });
 
 onUnmounted(() => {

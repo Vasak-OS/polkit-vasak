@@ -1,6 +1,6 @@
 [package]
 name = "vasak-polkit-agent"
-version = "0.8.9"
+version = "0.8.10"
 description = "A Vasak Application (template)"
 authors = ["Vasak Group", "Joaquin (Pato) Decima"]
 edition = "2021"
@@ -44,7 +44,7 @@ zeroize = "1"
 # Para afinar el WebKit de la ventana (ver commands/webkit.rs). gtk queda en 0.18,
 # la que trae Tauri vía tao; ambas enlazan libs que la app Tauri ya usa.
 gtk = "0.18"
-webkit2gtk = "2.0"
+webkit2gtk = { version = "2.0", features = ["v2_34"] }
 
 [dev-dependencies]
 # Sólo para el test que valida los catálogos de idioma.

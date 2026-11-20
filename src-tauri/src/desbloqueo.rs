@@ -263,6 +263,19 @@ impl DesbloqueoDeDispositivos {
         let (emisor, receptor) = oneshot::channel();
         self.pendientes.registrar(id.clone(), emisor);
 
+        // La ventana es residente y pudo tener su proceso muerto mientras estaba
+        // escondida (ver `commands::surface_lifecycle` y `begin_authentication`):
+        // se guarda qué mostrar y se la prepara —recargando si hace falta— antes
+        // de mostrarla, y la página lo pide con `unlock_pending` al recargar. El
+        // evento se emite igual para el caso del proceso vivo.
+        crate::commands::surface_lifecycle::set_unlock_view(Some(
+            crate::commands::surface_lifecycle::UnlockView {
+                id: id.clone(),
+                name: nombre.to_string(),
+                wrong_passphrase: frase_incorrecta,
+            },
+        ));
+        crate::commands::surface_lifecycle::prepare_show(&self.app);
         if let Some(ventana) = self.app.get_webview_window("main") {
             let _ = ventana.show();
             let _ = ventana.set_focus();
@@ -287,6 +300,8 @@ impl DesbloqueoDeDispositivos {
             // El otro extremo se cayó: la ventana se cerró sin contestar.
             Err(_) => {
                 self.pendientes.olvidar(&id);
+                // La ventana se cerró sin contestar; que un reload no la reabra.
+                crate::commands::surface_lifecycle::set_unlock_view(None);
                 Err(ErrorDeDesbloqueo::Cancelado(
                     "el diálogo se cerró sin respuesta".to_string(),
                 ))
@@ -296,9 +311,13 @@ impl DesbloqueoDeDispositivos {
 
     fn ocultar_ventana(&self) {
         let _ = self.app.emit("unlock-done", serde_json::json!({}));
+        crate::commands::surface_lifecycle::set_unlock_view(None);
         if let Some(ventana) = self.app.get_webview_window("main") {
             let _ = ventana.hide();
         }
+        // Escondida: se programa matar su proceso para liberar la RAM mientras no
+        // se use (vasak-desktop#307). La próxima apertura la repone recargando.
+        crate::commands::surface_lifecycle::arm_after_hide(&self.app);
     }
 }
 
