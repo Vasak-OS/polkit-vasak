@@ -94,17 +94,23 @@ function triggerShake() {
 	}, 500);
 }
 
+// Lo que hace aparecer el diálogo con un pedido, venga del evento o de la
+// pregunta al montar.
+function applyRequest(payload: PolkitRequest) {
+	message.value = payload.message;
+	cookie.value = payload.cookie;
+	password.value = '';
+	error.value = '';
+	loading.value = false;
+	polkitAsking.value = true;
+	nextTick(() => inputRef.value?.focus());
+}
+
 onMounted(async () => {
 	document.addEventListener('keydown', onKeydown);
 
 	unlistenRequest = await listen<PolkitRequest>('polkit-request', (event) => {
-		message.value = event.payload.message;
-		cookie.value = event.payload.cookie;
-		password.value = '';
-		error.value = '';
-		loading.value = false;
-		polkitAsking.value = true;
-		nextTick(() => inputRef.value?.focus());
+		applyRequest(event.payload);
 	});
 
 	// Sólo lo del pedido a la vista: otro que termina o se cancela no lo toca.
@@ -135,6 +141,12 @@ onMounted(async () => {
 			loading.value = false;
 		}
 	});
+
+	// Al montar —incluido tras recargar el webview, cuando su proceso se repuso—
+	// se pregunta si hay un pedido en curso: el `polkit-request` que lo traía se
+	// perdió en la recarga.
+	const pendiente = await invoke<PolkitRequest | null>('polkit_pending');
+	if (pendiente) applyRequest(pendiente);
 });
 
 onUnmounted(() => {

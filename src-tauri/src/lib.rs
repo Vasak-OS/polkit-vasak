@@ -120,6 +120,18 @@ impl<R: tauri::Runtime> PolkitAgent<R> {
             return;
         }
 
+        // La ventana es residente y pudo habérsele matado el proceso mientras
+        // estaba escondida (vasak-desktop#307): se guarda qué mostrar y se la
+        // prepara —recargando si hace falta— antes de mostrarla, así la página
+        // recargada lo encuentra al preguntar con `polkit_pending`. El evento se
+        // emite igual, para el caso en que el proceso seguía vivo.
+        commands::surface_lifecycle::set_polkit_view(Some(
+            commands::surface_lifecycle::PolkitView {
+                message: message_owned.clone(),
+                cookie: cookie_owned.clone(),
+            },
+        ));
+        commands::surface_lifecycle::prepare_show(&self.app_handle);
         // Show window first so the Vue transition is visible
         if let Some(window) = self.app_handle.get_webview_window("main") {
             let _ = window.show();
@@ -155,6 +167,9 @@ impl<R: tauri::Runtime> PolkitAgent<R> {
                         .lock()
                         .expect("lock pending")
                         .remove(&cookie_owned);
+                    // La página ya se cerró por su lado; que un reload no la
+                    // vuelva a mostrar.
+                    commands::surface_lifecycle::set_polkit_view(None);
                     return;
                 }
             };
@@ -231,9 +246,13 @@ impl<R: tauri::Runtime> PolkitAgent<R> {
         // transición de salida de Vue antes de ocultar. (La cancelación retorna
         // antes, sin llegar acá.)
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        commands::surface_lifecycle::set_polkit_view(None);
         if let Some(window) = self.app_handle.get_webview_window("main") {
             let _ = window.hide();
         }
+        // Escondida: se programa matar su proceso para liberar la RAM mientras no
+        // se use (vasak-desktop#307). La próxima apertura la repone recargando.
+        commands::surface_lifecycle::arm_after_hide(&self.app_handle);
     }
 
     /// polkitd cancela por la **cookie** (`s`), no por una ruta de objeto: con
@@ -521,6 +540,12 @@ pub fn run() {
                 });
             });
 
+            // La ventana nace escondida y una sesión real puede no pedir nunca ni
+            // un permiso ni un desbloqueo: se programa matar su proceso para no
+            // cargar ~240 MB toda la sesión sin usarlos. La primera apertura lo
+            // repone recargando (vasak-desktop#307).
+            commands::surface_lifecycle::arm_after_hide(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -528,7 +553,9 @@ pub fn run() {
             cancel_pending,
             desbloqueo::enviar_frase,
             desbloqueo::cancelar_desbloqueo,
-            commands::webkit::tune_webview
+            commands::webkit::tune_webview,
+            commands::surface_lifecycle::polkit_pending,
+            commands::surface_lifecycle::unlock_pending
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
