@@ -10,7 +10,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import PolkitModal from '@/components/PolkitModal.vue';
 import UnlockModal from '@/components/UnlockModal.vue';
 import { useDialogs } from '@/composables/useDialogs';
-import { forgetEverything, invocations, putInTheme, returns } from './doubles';
+import { emit, forgetEverything, invocations, putInTheme, returns } from './doubles';
 
 const { polkitAsking, unlockAsking } = useDialogs();
 const views: VueWrapper[] = [];
@@ -19,6 +19,24 @@ async function mountAndSettle(component: typeof PolkitModal | typeof UnlockModal
 	const view = mount(component, { attachTo: document.body });
 	views.push(view);
 	// Sin ningún `emit`: el pedido sólo puede llegar por la pregunta al montar.
+	for (let i = 0; i < 5; i++) await view.vm.$nextTick();
+	return view;
+}
+
+/**
+ * Monta y deja llegar un evento justo cuando la pregunta al montar ya salió pero
+ * todavía no volvió: es la carrera que la guarda tiene que ganar.
+ */
+async function mountWithEventDuringPull(
+	component: typeof PolkitModal | typeof UnlockModal,
+	pull: string,
+	event: string,
+	payload: unknown,
+) {
+	const view = mount(component, { attachTo: document.body });
+	views.push(view);
+	while (!invocations.includes(pull)) await Promise.resolve();
+	await emit(event, payload);
 	for (let i = 0; i < 5; i++) await view.vm.$nextTick();
 	return view;
 }
@@ -76,5 +94,32 @@ describe('pedido pendiente al montar', () => {
 
 		expect(invocations).toContain('unlock_pending');
 		expect(unlockAsking.value).toBe(false);
+	});
+
+	test('polkit: un evento durante el montaje gana al pedido pendiente, que ya quedó viejo', async () => {
+		returns.set('polkit_pending', { message: 'Pedido viejo', cookie: 'viejo' });
+
+		const view = await mountWithEventDuringPull(PolkitModal, 'polkit_pending', 'polkit-request', {
+			message: 'Pedido nuevo',
+			cookie: 'nuevo',
+		});
+
+		expect(view.text()).toContain('Pedido nuevo');
+		expect(view.text()).not.toContain('Pedido viejo');
+	});
+
+	test('el desbloqueo: un evento durante el montaje gana al disco pendiente, que ya quedó viejo', async () => {
+		returns.set('unlock_pending', { id: 'viejo', name: 'Disco viejo', wrongPassphrase: true });
+
+		const view = await mountWithEventDuringPull(UnlockModal, 'unlock_pending', 'unlock-request', {
+			id: 'nuevo',
+			name: 'Disco nuevo',
+			wrongPassphrase: false,
+		});
+
+		// El nombre no se ve con el `t()` de pruebas: lo que distingue al pedido
+		// viejo del nuevo es el error de frase equivocada que sólo el viejo trae.
+		expect(unlockAsking.value).toBe(true);
+		expect(view.text()).not.toContain('unlock.wrongPassphrase');
 	});
 });

@@ -47,6 +47,17 @@ static GEN: AtomicU64 = AtomicU64::new(0);
 static POLKIT_VIEW: Mutex<Option<PolkitView>> = Mutex::new(None);
 static UNLOCK_VIEW: Mutex<Option<UnlockView>> = Mutex::new(None);
 
+/// Las pruebas que escriben `POLKIT_VIEW` (la de este módulo y las del agente en
+/// `lib.rs`, que pasan por `begin_authentication`) corren en paralelo sobre un
+/// estático global: la que lo toma las serializa.
+#[cfg(test)]
+static VIEWS_TEST_GUARD: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_views_for_tests() -> std::sync::MutexGuard<'static, ()> {
+    VIEWS_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// El pedido de polkit a la vista: el mismo contenido que el evento
 /// `polkit-request`.
 #[derive(Clone, Serialize)]
@@ -154,6 +165,13 @@ fn maybe_terminate<R: tauri::Runtime>(app: &AppHandle<R>, generation: u64) {
             return;
         }
         if let Some(window) = app_main.get_webview_window("main") {
+            // Un `show` que entró en el hueco entre `hide()` y `arm_after_hide`
+            // (otro pedido justo al cerrarse el anterior) rearma la generación a
+            // este mismo valor, así que la guarda de arriba no lo ataja: la
+            // ventana está visible y en uso. No se mata; el próximo `hide` rearma.
+            if window.is_visible().unwrap_or(false) {
+                return;
+            }
             let _ = window.with_webview(|platform| {
                 use webkit2gtk::WebViewExt;
                 platform.inner().terminate_web_process();
@@ -185,10 +203,11 @@ mod tests {
         assert!(!reload_needed(false));
     }
 
-    // Los almacenes son globales: una sola prueba los recorre en orden para que
-    // otras pruebas en paralelo no se pisen.
+    // Los almacenes son globales: una sola prueba los recorre en orden y toma la
+    // guarda que comparten las pruebas del agente, para que no se pisen.
     #[test]
     fn la_vista_guardada_es_la_que_devuelven_los_comandos_de_consulta() {
+        let _vistas = lock_views_for_tests();
         set_polkit_view(Some(PolkitView {
             message: "Instalar".into(),
             cookie: "c1".into(),

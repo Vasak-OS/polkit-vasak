@@ -137,13 +137,20 @@ function applyRequest(payload: UnlockRequest) {
 onMounted(async () => {
 	document.addEventListener('keydown', onKeydown);
 
+	// Un evento del backend es la verdad más nueva: si alguno llega, el pedido
+	// que `unlock_pending` trae al montar ya quedó viejo y no se vuelve a aplicar
+	// (si no, un pedido viejo reabriría o pisaría uno que ya cambió o terminó).
+	let eventoRecibido = false;
+
 	unlistenRequest = await listen<UnlockRequest>('unlock-request', (event) => {
+		eventoRecibido = true;
 		applyRequest(event.payload);
 	});
 
 	// El desbloqueo terminó —bien o mal— y la ventana se va. Quien avisa de qué
 	// pasó es el gestor de archivos, que es donde la persona está mirando.
 	unlistenDone = await listen('unlock-done', () => {
+		eventoRecibido = true;
 		close();
 	});
 
@@ -151,7 +158,7 @@ onMounted(async () => {
 	// se pregunta si hay un desbloqueo en curso: el `unlock-request` que lo traía
 	// se perdió en la recarga.
 	const pendiente = await invoke<UnlockRequest | null>('unlock_pending');
-	if (pendiente) applyRequest(pendiente);
+	if (pendiente && !eventoRecibido) applyRequest(pendiente);
 });
 
 onUnmounted(() => {

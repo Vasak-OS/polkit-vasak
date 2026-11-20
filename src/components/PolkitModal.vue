@@ -109,18 +109,26 @@ function applyRequest(payload: PolkitRequest) {
 onMounted(async () => {
 	document.addEventListener('keydown', onKeydown);
 
+	// Un evento del backend es la verdad más nueva: si alguno llega, el pedido
+	// que `polkit_pending` trae al montar ya quedó viejo y no se vuelve a aplicar
+	// (si no, un pedido viejo reabriría o pisaría uno que ya cambió o se canceló).
+	let eventoRecibido = false;
+
 	unlistenRequest = await listen<PolkitRequest>('polkit-request', (event) => {
+		eventoRecibido = true;
 		applyRequest(event.payload);
 	});
 
 	// Sólo lo del pedido a la vista: otro que termina o se cancela no lo toca.
 	unlistenCancel = await listen<{ cookie: string }>('polkit-cancel', (event) => {
+		eventoRecibido = true;
 		if (event.payload.cookie !== cookie.value) return;
 		polkitAsking.value = false;
 		password.value = '';
 	});
 
 	unlistenResult = await listen<PolkitResult>('polkit-result', (event) => {
+		eventoRecibido = true;
 		if (event.payload.cookie !== cookie.value) return;
 		if (event.payload.success) {
 			polkitAsking.value = false;
@@ -146,7 +154,7 @@ onMounted(async () => {
 	// se pregunta si hay un pedido en curso: el `polkit-request` que lo traía se
 	// perdió en la recarga.
 	const pendiente = await invoke<PolkitRequest | null>('polkit_pending');
-	if (pendiente) applyRequest(pendiente);
+	if (pendiente && !eventoRecibido) applyRequest(pendiente);
 });
 
 onUnmounted(() => {

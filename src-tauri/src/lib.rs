@@ -838,6 +838,7 @@ mod pruebas_de_sesion {
 
         #[tokio::test]
         async fn cancelar_termina_la_autenticacion_pendiente_con_esa_cookie() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (_servidor, cliente, pendientes, _app) = montar().await;
             let inicio = empezar(&cliente, "c1");
             esperar_pendiente(&pendientes, "c1").await;
@@ -879,6 +880,7 @@ mod pruebas_de_sesion {
 
         #[tokio::test]
         async fn con_dos_pedidos_a_la_vez_el_segundo_espera_su_turno_para_mostrarse() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (_servidor, cliente, pendientes, app) = montar().await;
             let vistos = pedidos_emitidos(&app);
             let primero = empezar(&cliente, "c1");
@@ -913,6 +915,7 @@ mod pruebas_de_sesion {
 
         #[tokio::test]
         async fn un_pedido_cancelado_mientras_espera_su_turno_no_se_muestra_y_termina() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (_servidor, cliente, pendientes, app) = montar().await;
             let vistos = pedidos_emitidos(&app);
             let primero = empezar(&cliente, "c1");
@@ -938,6 +941,7 @@ mod pruebas_de_sesion {
 
         #[tokio::test]
         async fn esperar_a_la_persona_no_traba_los_otros_pedidos() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (_servidor, cliente, pendientes, _app) = montar().await;
             let primero = empezar(&cliente, "c1");
             esperar_pendiente(&pendientes, "c1").await;
@@ -1059,6 +1063,7 @@ mod pruebas_de_sesion {
         /// segundo `polkit-result`.
         #[tokio::test]
         async fn una_contrasena_equivocada_vuelve_a_pedir_hasta_el_tope_y_despues_cierra() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (auth, llamadas) = autenticador(vec![false, false, false]);
             let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
             let resultados = resultados_emitidos(&app);
@@ -1114,6 +1119,7 @@ mod pruebas_de_sesion {
         /// éxito, sin agotar el tope.
         #[tokio::test]
         async fn tras_una_equivocada_la_correcta_autentica_y_cierra() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             let (auth, llamadas) = autenticador(vec![false, true]);
             let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
             let resultados = resultados_emitidos(&app);
@@ -1145,6 +1151,7 @@ mod pruebas_de_sesion {
         /// **no** se reintenta (reintentar no cambiaría nada), se cierra directo.
         #[tokio::test]
         async fn sin_identidad_falla_cerrado_y_no_reintenta() {
+            let _vistas = commands::surface_lifecycle::lock_views_for_tests();
             // `empezar` manda la lista de identidades vacía.
             let (auth, llamadas) = autenticador(vec![true, true, true]);
             let (_servidor, cliente, pendientes, app) = montar_con(auth).await;
